@@ -51,7 +51,10 @@ def test_model(model_range: Union[int, tuple], test_set: Tuple = config.test_env
     network.eval()
     network.to(DEVICE)
 
+    print(f'cpu count: {mp.cpu_count()}')
     pool = mp.Pool(mp.cpu_count()//2)
+
+    print(f'testing network')
 
     if isinstance(model_range, int):
         state_dict = torch.load(os.path.join(config.save_path, f'{model_range}.pth'), map_location=DEVICE)
