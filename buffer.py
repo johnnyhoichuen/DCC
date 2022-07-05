@@ -31,7 +31,7 @@ class SumTree:
             layer += 1
         assert 2**(layer-1) == capacity, 'capacity only allow n**2 size'
         self.layer = layer
-        self.tree = np.zeros(2**layer-1, dtype=np.float64)
+        self.tree = np.zeros(2**layer-1, dtype=np.float64) # sum tree
         self.capacity = capacity
         self.size = 0
 

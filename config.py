@@ -1,3 +1,5 @@
+from datetime import datetime
+
 ############################################################
 ####################    environment     ####################
 ############################################################
@@ -25,11 +27,13 @@ gamma = 0.99
 batch_size = 128
 learning_starts = 50000
 target_network_update_freq = 1750
-save_path='./saved_models'
 max_episode_length = 256
 buffer_capacity = 262144
 chunk_capacity = 64
 burn_in_steps = 20
+
+time = datetime.now().strftime("%y-%m-%d_at_%H.%M.%S")
+save_path=f'saved_models/{time}'
 
 actor_update_steps = 200
 
@@ -40,8 +44,12 @@ grad_norm_dqn=40
 forward_steps = 2
 
 # prioritized replay
-prioritized_replay_alpha=0.6
-prioritized_replay_beta=0.4
+# prioritized_replay_alpha=0.6
+# prioritized_replay_beta=0.4
+
+# random replay
+prioritized_replay_alpha=0.01
+prioritized_replay_beta=1
 
 # curriculum learning
 init_env_settings = (1, 10)
@@ -64,9 +72,7 @@ cl_history_size = 100
 test_seed = 0
 num_test_cases = 200
 test_env_settings = (
-                    (40, 4, 0.3), (40, 8, 0.3), 
-                    (40, 16, 0.3), 
-                    (40, 32, 0.3),
-                    (40, 64, 0.3),
-                    (80, 4, 0.3), (80, 8, 0.3), (80, 16, 0.3), (80, 32, 0.3), (80, 64, 0.3), (80, 128, 0.3),
+                    (40, 4, 0.3), (40, 8, 0.3), (40, 16, 0.3), (40, 32, 0.3), (40, 64, 0.3),
+                    (80, 4, 0.3), (80, 8, 0.3), (80, 16, 0.3), (80, 32, 0.3), (80, 64, 0.3),
+                    # (80, 128, 0.3),
                     ) # map length, number of agents, density

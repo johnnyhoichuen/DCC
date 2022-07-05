@@ -59,7 +59,7 @@ class GlobalBuffer:
     def _prepare_data(self):
         while True:
             if len(self.batched_data) <= 4:
-                data = self.sample_batch(config.batch_size)
+                data = self._sample_batch(config.batch_size)
                 data_id = ray.put(data)
                 self.batched_data.append(data_id)
                 
@@ -134,7 +134,7 @@ class GlobalBuffer:
 
             for global_idx, local_idx in zip(global_idxes.tolist(), local_idxes.tolist()):
                 
-                assert local_idx < self.size_buf[global_idx], 'index is {} but size is {}, p {}'.format(local_idx, self.size_buf[global_idx], self.priority_tree[idx])
+                assert local_idx < self.size_buf[global_idx], 'index is {} but size is {}, p {}'.format(local_idx, self.size_buf[global_idx], self.priority_tree[local_idx])
 
                 steps = min(config.forward_steps, self.size_buf[global_idx].item()-local_idx)
 
@@ -350,6 +350,12 @@ class Learner:
                 self.tar_model.load_state_dict(self.model.state_dict())
             
             if i % config.save_interval == 0:
+                # create dir
+                path = os.path.join(os.getcwd(), f'{config.save_path}')
+
+                if not os.path.exists(path):
+                    os.mkdir(path)
+
                 torch.save(self.model.state_dict(), os.path.join(config.save_path, f'{self.counter}.pth'))
 
         self.done = True
@@ -388,7 +394,7 @@ class Actor:
         while True:
 
             # sample action
-            actions, q_val, hidden, relative_pos, comm_mask, _ = self.model.step(torch.from_numpy(obs.astype(np.float32)), 
+            actions, q_val, hidden, relative_pos, comm_mask = self.model.step(torch.from_numpy(obs.astype(np.float32)),
                                                                             torch.from_numpy(last_act.astype(np.float32)), 
                                                                             torch.from_numpy(pos.astype(np.int)))
 

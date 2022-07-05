@@ -148,5 +148,20 @@ def code_test():
 
 if __name__ == '__main__':
 
+    # from datetime import datetime
+    # time = datetime.now().strftime("%y-%m-%d at %H.%M.%S")
+    # save_path = f'./saved_models/{time}'
+    # print(save_path)
+
+    # # test mkdir
+    # cwd = os.getcwd()
+    # path = os.path.join(cwd, config.save_path)
+    # print(os.getcwd())
+    # print(path)
+    # os.mkdir(path) # windows
+
+    print(os.path.exists('/home/guest1/Documents/johnny/ml-projects/DCC/saved_models/22-07-05_at_15.44.56'))
+
     # load trained model and reproduce results in paper
-    test_model(128000)
+    # test_model(128000)
+    pass
