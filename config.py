@@ -19,7 +19,7 @@ action_dim = 5
 ############################################################
 
 # basic training setting
-num_actors = 2
+num_actors = 10
 log_interval = 10
 training_steps = 150000
 save_interval = 1000
