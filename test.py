@@ -4,6 +4,7 @@ import random
 import pickle
 from typing import Tuple, Union
 import warnings
+
 warnings.simplefilter("ignore", UserWarning)
 from tqdm import tqdm
 import numpy as np
@@ -18,6 +19,7 @@ np.random.seed(config.test_seed)
 random.seed(config.test_seed)
 DEVICE = torch.device('cpu')
 torch.set_num_threads(1)
+
 
 def create_test(test_env_settings: Tuple = config.test_env_settings, num_test_cases: int = config.num_test_cases):
     '''
@@ -42,8 +44,7 @@ def create_test(test_env_settings: Tuple = config.test_env_settings, num_test_ca
             pickle.dump(tests, f)
 
 
-
-def test_model(model_range: Union[int, tuple], test_set: Tuple = config.test_env_settings):
+def test_model(model_range: Union[int, tuple], datetime: str, test_set: Tuple = config.test_env_settings):
     '''
     test model in 'saved_models' folder
     '''
@@ -52,20 +53,28 @@ def test_model(model_range: Union[int, tuple], test_set: Tuple = config.test_env
     network.to(DEVICE)
 
     print(f'cpu count: {mp.cpu_count()}')
-    pool = mp.Pool(mp.cpu_count()//2)
+    # pool = mp.Pool(mp.cpu_count()//2)
+    pool = mp.Pool(config.num_actors)  # restict to 4 cpu
 
     print(f'testing network')
 
-    if isinstance(model_range, int):
-        state_dict = torch.load(os.path.join(config.save_path, f'{model_range}.pth'), map_location=DEVICE)
+    if isinstance(model_range, str):
+        state_dict = torch.load(os.path.join(config.test_model_path, f'{datetime}/{model_range}.pth'),
+                                map_location=DEVICE)
         network.load_state_dict(state_dict)
         network.eval()
         network.share_memory()
 
-        
         print(f'----------test model {model_range}----------')
 
+        should_skip = []
+
         for case in test_set:
+            map_size = case[0]
+            if map_size in should_skip:
+                print(f'test with map size: {case[0]} skipped')
+                continue
+
             print(f"test set: {case[0]} length {case[1]} agents {case[2]} density")
             with open('./test_set/{}length_{}agents_{}density.pth'.format(case[0], case[1], case[2]), 'rb') as f:
                 tests = pickle.load(f)
@@ -75,20 +84,25 @@ def test_model(model_range: Union[int, tuple], test_set: Tuple = config.test_env
 
             success, steps, num_comm = zip(*ret)
 
+            if sum(steps) / len(steps) == 256:
+                print(f'max steps reached, skipping other test cases with the same map size')
 
-            print("success rate: {:.2f}%".format(sum(success)/len(success)*100))
-            print("average step: {}".format(sum(steps)/len(steps)))
-            print("communication times: {}".format(sum(num_comm)/len(num_comm)))
+                should_skip.append(map_size)
+                # test_set = remove_map(list(test_set), map_size)
+                continue
+
+            print("success rate: {:.2f}%".format(sum(success) / len(success) * 100))
+            print("average step: {}".format(sum(steps) / len(steps)))
+            print("communication times: {}".format(sum(num_comm) / len(num_comm)))
             print()
 
     elif isinstance(model_range, tuple):
 
-        for model_name in range(model_range[0], model_range[1]+1, config.save_interval):
+        for model_name in range(model_range[0], model_range[1] + 1, config.save_interval):
             state_dict = torch.load(os.path.join(config.save_path, f'{model_name}.pth'), map_location=DEVICE)
             network.load_state_dict(state_dict)
             network.eval()
             network.share_memory()
-
 
             print(f'----------test model {model_name}----------')
 
@@ -100,34 +114,32 @@ def test_model(model_range: Union[int, tuple], test_set: Tuple = config.test_env
                 tests = [(test, network) for test in tests]
                 ret = pool.map(test_one_case, tests)
 
-
                 success, steps, num_comm = zip(*ret)
 
-                print("success rate: {:.2f}%".format(sum(success)/len(success)*100))
-                print("average step: {}".format(sum(steps)/len(steps)))
-                print("communication times: {}".format(sum(num_comm)/len(num_comm)))
+                print("success rate: {:.2f}%".format(sum(success) / len(success) * 100))
+                print("average step: {}".format(sum(steps) / len(steps)))
+                print("communication times: {}".format(sum(num_comm) / len(num_comm)))
                 print()
 
             print('\n')
-            
+
 
 def test_one_case(args):
-
     env_set, network = args
 
     env = Environment()
     env.load(env_set[0], env_set[1], env_set[2])
     obs, last_act, pos = env.observe()
-    
+
     done = False
     network.reset()
 
     step = 0
     num_comm = 0
     while not done and env.steps < config.max_episode_length:
-        actions, _, _, _, comm_mask = network.step(torch.as_tensor(obs.astype(np.float32)).to(DEVICE), 
-                                                    torch.as_tensor(last_act.astype(np.float32)).to(DEVICE), 
-                                                    torch.as_tensor(pos.astype(np.int)))
+        actions, _, _, _, comm_mask = network.step(torch.as_tensor(obs.astype(np.float32)).to(DEVICE),
+                                                   torch.as_tensor(last_act.astype(np.float32)).to(DEVICE),
+                                                   torch.as_tensor(pos.astype(np.int)))
         (obs, last_act, pos), _, done, _ = env.step(actions)
         step += 1
         num_comm += np.sum(comm_mask)
@@ -135,19 +147,32 @@ def test_one_case(args):
     return np.array_equal(env.agents_pos, env.goals_pos), step, num_comm
 
 
-
-
 def code_test():
     env = Environment()
     network = Network()
     network.eval()
     obs, last_act, pos = env.observe()
-    network.step(torch.as_tensor(obs.astype(np.float32)).to(DEVICE), 
-                                                    torch.as_tensor(last_act.astype(np.float32)).to(DEVICE), 
-                                                    torch.as_tensor(pos.astype(np.int)))
+    # print(f'obs: {obs}')
+    # print(f'last_act: {last_act}')
+    # print(f'pos: {pos}')
+    network.step(torch.as_tensor(obs.astype(np.float32)).to(DEVICE),
+                 torch.as_tensor(last_act.astype(np.float32)).to(DEVICE),
+                 torch.as_tensor(pos.astype(np.int)))
+
+# # remove test case of the same map size if max steps reached at fewer agents number
+# def remove_map(array, size):
+#     if len(array) == 0:
+#         return []
+#
+#     element = array[0][0]
+#     if element == size:
+#         array.pop(0)
+#         remove_map(array, size)
+#     else:
+#         return array
+
 
 if __name__ == '__main__':
-
     # from datetime import datetime
     # time = datetime.now().strftime("%y-%m-%d at %H.%M.%S")
     # save_path = f'./saved_models/{time}'
@@ -160,8 +185,17 @@ if __name__ == '__main__':
     # print(path)
     # os.mkdir(path) # windows
 
-    print(os.path.exists('/home/guest1/Documents/johnny/ml-projects/DCC/saved_models/22-07-05_at_15.44.56'))
+    # samples = {
+    #     'weights': np.zeros(shape=32, dtype=np.float32),
+    #     'indexes': np.zeros(shape=32, dtype=np.int32)
+    # }
+    # print(samples)
+
+    # code_test()
 
     # load trained model and reproduce results in paper
-    # test_model(128000)
-    pass
+
+    for i in range(10000, 150001, 10000):
+        test_model(model_range=str(i), datetime='22-07-21_at_17.42.12',)
+
+    print('testing done')

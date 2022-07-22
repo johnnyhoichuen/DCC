@@ -400,9 +400,15 @@ class Environment:
         pos: current position of each agent, used for caculating communication mask
 
         '''
+
+        # [num_agents, 6 heuristic channels, obs_width/height, obs_width/height]
         obs = np.zeros((self.num_agents, 6, 2*self.obs_radius+1, 2*self.obs_radius+1), dtype=np.bool)
 
-        obstacle_map = np.pad(self.map, self.obs_radius, 'constant', constant_values=0)
+        obstacle_map = np.pad(array=self.map, pad_width=self.obs_radius, mode='constant', constant_values=0)
+        # TODO: compare obstacle_map and self.map
+        # print(f'comparing self.map and obstacle map in env.observe()')
+        # print(f'self.map: {self.map}')
+        # print(f'obstacle_map: {obstacle_map}')
 
         agent_map = np.zeros((self.map_size), dtype=np.bool)
         agent_map[self.agents_pos[:,0], self.agents_pos[:,1]] = 1
@@ -411,6 +417,7 @@ class Environment:
         for i, agent_pos in enumerate(self.agents_pos):
             x, y = agent_pos
 
+            # TODO: print out all of them and understand the syntax
             obs[i, 0] = agent_map[x:x+2*self.obs_radius+1, y:y+2*self.obs_radius+1]
             obs[i, 0, self.obs_radius, self.obs_radius] = 0
             obs[i, 1] = obstacle_map[x:x+2*self.obs_radius+1, y:y+2*self.obs_radius+1]

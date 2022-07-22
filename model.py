@@ -150,10 +150,13 @@ class Network(nn.Module):
 
     @torch.no_grad()
     def step(self, obs, last_act, pos):
+        """
+        return actions, q_val.numpy(), self.hidden.squeeze(0).numpy(), relative_pos.numpy(), comm_mask.numpy()
+        """
         num_agents = obs.size(0)
         agent_indexing = torch.arange(num_agents)
         relative_pos = pos.unsqueeze(0)-pos.unsqueeze(1)
-        
+
         in_obs_mask = (relative_pos.abs() <= config.obs_radius).all(2)
         in_obs_mask[agent_indexing, agent_indexing] = 0
 
@@ -212,7 +215,7 @@ class Network(nn.Module):
                 self.hidden = self.recurrent(latent)
             else:
                 self.hidden = self.recurrent(latent, self.hidden)
-            
+
         assert (comm_mask[agent_indexing, agent_indexing] == 0).all()
 
         self.hidden = self.comm(self.hidden.unsqueeze(0), relative_pos.unsqueeze(0), comm_mask.unsqueeze(0))
@@ -230,10 +233,14 @@ class Network(nn.Module):
     def reset(self):
         self.hidden = None
 
-    @autocast()
+    @autocast() # allow mixed precision
     def forward(self, obs, last_act, steps, hidden, relative_pos, comm_mask):
         '''
         used for training
+
+        in worker.py ~ line 321 or 325:
+        321: b_q_ = self.tar_model(b_obs, b_last_act, b_next_seq_len, b_hidden, b_relative_pos, b_comm_mask).max(1, keepdim=True)[0]
+        325: b_q = self.model(b_obs[:-config.forward_steps], b_last_act[:-config.forward_steps], b_seq_len, b_hidden, b_relative_pos[:, :-config.forward_steps], b_comm_mask[:, :-config.forward_steps]).gather(1, b_action)
         '''
         # obs shape: seq_len, batch_size, num_agents, obs_shape
         # relative_pos shape: batch_size, seq_len, num_agents, num_agents, 2

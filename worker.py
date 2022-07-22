@@ -22,13 +22,13 @@ class GlobalBuffer:
     def __init__(self, buffer_capacity=config.buffer_capacity, init_env_settings=config.init_env_settings,
                 alpha=config.prioritized_replay_alpha, beta=config.prioritized_replay_beta, chunk_capacity=config.chunk_capacity):
 
-        self.capacity = buffer_capacity
-        self.chunk_capacity = chunk_capacity
-        self.num_chunks = buffer_capacity // chunk_capacity
+        self.capacity = buffer_capacity # 262144
+        self.chunk_capacity = chunk_capacity # 64
+        self.num_chunks = buffer_capacity // chunk_capacity # 4096 = 262144 // 64
         self.ptr = 0
 
         # prioritized experience replay
-        self.priority_tree = SumTree(buffer_capacity)
+        self.priority_tree = SumTree(buffer_capacity) # 262144
         self.alpha = alpha
         self.beta = beta
 
@@ -134,7 +134,8 @@ class GlobalBuffer:
 
             for global_idx, local_idx in zip(global_idxes.tolist(), local_idxes.tolist()):
                 
-                assert local_idx < self.size_buf[global_idx], 'index is {} but size is {}, p {}'.format(local_idx, self.size_buf[global_idx], self.priority_tree[local_idx])
+                assert local_idx < self.size_buf[global_idx], \
+                    'index is {} but size is {}, p {}'.format(local_idx, self.size_buf[global_idx], self.priority_tree[local_idx])
 
                 steps = min(config.forward_steps, self.size_buf[global_idx].item()-local_idx)
 
@@ -168,7 +169,9 @@ class GlobalBuffer:
 
             # importance sampling weight
             min_p = np.min(priorities)
+            # print(f'min_p: {min_p}')
             weights = np.power(priorities/min_p, -self.beta)
+            # print(f'weights: {weights}')
 
             b_action = self.act_buf[idxes]
             b_reward = self.rew_buf[idxes]
@@ -298,7 +301,8 @@ class Learner:
         b_seq_len[:] = config.burn_in_steps+1
 
         for i in range(1, config.training_steps+1):
-        
+
+            # get a batch of data
             data_id = ray.get(self.buffer.get_batched_data.remote())
             data = ray.get(data_id)
 
@@ -319,19 +323,25 @@ class Learner:
 
             target_q = b_reward + b_gamma * b_q_
 
+            # default forward_steps = 2
+            # b_obs[:-2] => last 2 b_obs
             b_q = self.model(b_obs[:-config.forward_steps], b_last_act[:-config.forward_steps], b_seq_len, b_hidden, b_relative_pos[:, :-config.forward_steps], b_comm_mask[:, :-config.forward_steps]).gather(1, b_action)
 
             td_error = target_q - b_q
 
             priorities = td_error.detach().clone().squeeze().abs().clamp(1e-6).cpu().numpy()
 
+            # apply MSE loss
             loss = F.mse_loss(b_q, target_q)
-            self.loss += loss.item()
+            self.loss += loss.item() # loss.item() => convert tensor to normal scalar and
 
-            self.optimizer.zero_grad()
+            self.optimizer.zero_grad() # zero out the gradients before backprop because pytorch accumulates them
             scaler.scale(loss).backward()
+
+            # TODO: what are these?
             scaler.unscale_(self.optimizer)
             nn.utils.clip_grad_norm_(self.model.parameters(), config.grad_norm_dqn)
+
             scaler.step(self.optimizer)
             scaler.update()
             
@@ -345,7 +355,7 @@ class Learner:
 
             self.counter += 1
 
-            # update target net, save model
+            # update target network, save model
             if i % config.target_network_update_freq == 0:
                 self.tar_model.load_state_dict(self.model.state_dict())
             
@@ -389,7 +399,7 @@ class Actor:
 
     def run(self):
         done = False
-        obs, last_act, pos, local_buffer = self._reset()
+        obs, last_act, pos, local_buffer = self._reset() # came from env.observe()
         
         while True:
 

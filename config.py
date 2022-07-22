@@ -19,7 +19,7 @@ action_dim = 5
 ############################################################
 
 # basic training setting
-num_actors = 16
+num_actors = 2
 log_interval = 10
 training_steps = 150000
 save_interval = 1000
@@ -34,6 +34,7 @@ burn_in_steps = 20
 
 time = datetime.now().strftime("%y-%m-%d_at_%H.%M.%S")
 save_path=f'saved_models/{time}'
+test_model_path=f'./saved_models'
 
 actor_update_steps = 200
 
@@ -44,12 +45,12 @@ grad_norm_dqn=40
 forward_steps = 2
 
 # prioritized replay
-# prioritized_replay_alpha=0.6
-# prioritized_replay_beta=0.4
+prioritized_replay_alpha=0.6
+prioritized_replay_beta=0.4
 
 # random replay
-prioritized_replay_alpha=0.01
-prioritized_replay_beta=1
+# prioritized_replay_alpha=0.0001 # crash when set to 0
+# prioritized_replay_beta=1
 
 # curriculum learning
 init_env_settings = (1, 10)
@@ -72,7 +73,9 @@ cl_history_size = 100
 test_seed = 0
 num_test_cases = 200
 test_env_settings = (
-                    (40, 4, 0.3), (40, 8, 0.3), (40, 16, 0.3), (40, 32, 0.3), (40, 64, 0.3),
-                    (80, 4, 0.3), (80, 8, 0.3), (80, 16, 0.3), (80, 32, 0.3), (80, 64, 0.3),
+                    (40, 4, 0.3), (40, 8, 0.3), (40, 16, 0.3), (40, 32, 0.3),
+                    # (40, 64, 0.3),
+                    (80, 4, 0.3), (80, 8, 0.3), (80, 16, 0.3), (80, 32, 0.3),
+                    # (80, 64, 0.3),
                     # (80, 128, 0.3),
                     ) # map length, number of agents, density

@@ -2,6 +2,7 @@ import math
 from dataclasses import dataclass
 import numpy as np
 import config
+from torch.utils.data.sampler import BatchSampler, SubsetRandomSampler
 
 @dataclass
 class EpisodeData:
@@ -47,22 +48,61 @@ class SumTree:
     def batch_sample(self, batch_size: int):
         p_sum = self.tree[0]
         interval = p_sum/batch_size
+        # print(f'interval: {interval}')
 
+        # making an array with max value p_sum and grab value at every interval
+        # add randomness within the magnitude of interval
         prefixsums = np.arange(0, p_sum, interval, dtype=np.float64) + np.random.uniform(0, interval, batch_size)
+        # print(f'first prefixsums: {prefixsums}')
 
         idxes = np.zeros(batch_size, dtype=np.int)
-        for _ in range(self.layer-1):
+        for i in range(self.layer-1):
+            # print(f'at layer: {i}')
+
+            # value of child
             nodes = self.tree[idxes*2+1]
+            # print(f'at index {idxes[0]*2+1}, sum = {nodes[0]},  '
+            #       f'prefixsums(random val): {prefixsums[0]}')
+
+            # pick node's index if node > prefixsums
+            # print(f'idxes of options: {idxes[0]*2+1, idxes[0]*2+2}')
             idxes = np.where(prefixsums<nodes, idxes*2+1, idxes*2+2)
+            # print(f'idxes after checking if prefixsums < node: {idxes[0]}')
+
+            # if it's a node on the right, prefixsum -= node value on the left
+            # prefixsums-self.tree[idxes-1] if idxes%2==0 else prefixsums-self.tree[idxes-1]
             prefixsums = np.where(idxes%2==0, prefixsums-self.tree[idxes-1], prefixsums)
-        
+            # print(f'idxes%2: {idxes[0]%2==0}, prefixsums: {prefixsums[0]}, '
+            #       f'self.tree[{idxes[0]-1}]: {self.tree[idxes[0]-1]}, '
+            #       f'self.tree[{idxes[0]}]: {self.tree[idxes[0]]}, '
+            #       f'prefixsums[0]-self.tree[{idxes[0]-1}]: {prefixsums[0]-self.tree[idxes[0]-1]}')
+            # print(" ")
+
+        # print(f'final index!!!!!: {idxes[0]}')
+        # print(" ")
+
         priorities = self.tree[idxes]
+        # print(f'priorities: {priorities}')
+
+        # print(f'idxes before minus: {idxes}')
         idxes -= self.capacity-1
+        # print(f'idxes after minus: {idxes}')
 
         assert np.all(priorities>0), 'idx: {}, priority: {}'.format(idxes, priorities)
         assert np.all(idxes>=0) and np.all(idxes<self.capacity)
 
         return idxes, priorities
+
+    # def batch_random_sample(self, batch_size: int):
+    #     # sampler = BatchSampler(
+    #     #     SubsetRandomSampler(range(self.last_done)),
+    #     #     batch_size,
+    #     #     drop_last=True)
+    #
+    #     sum = self.tree[0]
+    #
+    #     idxes = np.zeros(batch_size, dtype=np.int)
+
 
     def batch_update(self, idxes: np.ndarray, priorities: np.ndarray):
         assert idxes.shape[0] == priorities.shape[0]
