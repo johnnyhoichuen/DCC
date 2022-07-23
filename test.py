@@ -55,8 +55,8 @@ def test_model(model_range: Union[int, tuple], datetime: str, test_set: Tuple = 
     network.to(DEVICE)
 
     print(f'cpu count: {mp.cpu_count()}')
-    pool = mp.Pool(mp.cpu_count()//2) # don't run this in ICDC server
-    # pool = mp.Pool(config.num_actors)  # restict to 4 cpu
+    # pool = mp.Pool(mp.cpu_count()//2) # don't run this in ICDC server
+    pool = mp.Pool(config.num_actors)  # restict to 4 cpu
 
     print(f'testing network')
 
@@ -226,7 +226,12 @@ if __name__ == '__main__':
     # test_model(model_range=(30000, 50000), datetime='22-07-21_at_17.42.12') # 667390
     # test_model(model_range=(60000, 90000), datetime='22-07-21_at_17.42.12') # 667392
     # test_model(model_range=(100000, 120000), datetime='22-07-21_at_17.42.12') # 667387
-    # test_model(model_range=(130000, 150000), datetime='22-07-21_at_17.42.12') # 667393
+    # test_model(model_range=(130000, 150000), datetime='22-07-21_at_17.42.12')
+
+    ncpus = int(os.environ["SLURM_JOB_CPUS_PER_NODE"])
+    # pool = mp.Pool(mp.cpu_count()//2) # don't run this in ICDC server
+    print(f'using ncpu {ncpus} cpus')
+    print(f'using mp {mp.cpu_count()} cpus')
 
 
     print('testing done')
