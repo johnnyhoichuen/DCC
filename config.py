@@ -19,10 +19,10 @@ action_dim = 5
 ############################################################
 
 # basic training setting
-num_actors = 10
+num_actors = 2
 log_interval = 10
 training_steps = 150000
-save_interval = 1000
+save_interval = 10000
 gamma = 0.99
 batch_size = 128
 learning_starts = 50000
@@ -60,7 +60,14 @@ pass_rate = 0.9
 
 # dqn network setting
 cnn_channel = 128
-hidden_dim = 256
+if obs_radius == 4:
+    hidden_dim =  256 # when obs_radius=4
+elif obs_radius == 5:
+    hidden_dim = 2304 # when obs_radius=5
+elif obs_radius == 6:
+    hidden_dim = 20741 # or 20736 # when obs_radius=6
+else:
+    raise ValueError('obs_radius must be 4, 5 or 6')
 
 # same as DHC if set to false
 selective_comm = True
