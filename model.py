@@ -174,6 +174,7 @@ class Network(nn.Module):
 
             test_obs[torch.arange(num_in_obs_agents.sum()), 0, test_relative_pos[:, 0], test_relative_pos[:, 1]] = 0
 
+            # check the dim of test_* and self.recurrent input dim
             test_last_act = torch.repeat_interleave(last_act, num_in_obs_agents, dim=0)
             if self.hidden is None:
                 test_hidden = torch.zeros((num_in_obs_agents.sum(), self.hidden_dim))
