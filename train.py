@@ -15,8 +15,6 @@ random.seed(0)
 
 
 def main(num_actors=config.num_actors, log_interval=config.log_interval):
-    num_cpus = int(sys.argv[1])
-    # address = sys.argv[2]
 
     # ray.init()
     ray.init(address=os.environ["ip_head"])
@@ -50,4 +48,8 @@ def main(num_actors=config.num_actors, log_interval=config.log_interval):
         print()
 
 if __name__ == '__main__':
-    main()
+    num_cpus = int(sys.argv[1])
+    # address = sys.argv[2]
+    print(f'train.py args: {sys.argv}')
+
+    main(num_actors=num_cpus)
