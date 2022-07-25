@@ -11,7 +11,8 @@ warnings.simplefilter("ignore", UserWarning)
 from tqdm import tqdm
 import numpy as np
 import torch
-import torch.multiprocessing as mp
+# import torch.multiprocessing as mp
+import ray.util.multiprocessing as mp
 from environment import Environment
 from model import Network
 import config
@@ -56,7 +57,7 @@ def test_model(model_range: Union[int, tuple], datetime: str, test_set: Tuple = 
 
     print(f'cpu used for testing: {config.num_actors}')
     # pool = mp.Pool(mp.cpu_count()//2) # don't run this in ICDC server
-    # pool = mp.Pool(config.num_actors)
+    pool = mp.Pool(config.num_actors)
 
     print(f'testing network')
 
@@ -117,7 +118,14 @@ def test_model(model_range: Union[int, tuple], datetime: str, test_set: Tuple = 
 
         print(f'----------test model {model_name}----------')
 
+        should_skip = []
+
         for case in test_set:
+            map_size = case[0]
+            if map_size in should_skip:
+                print(f'test with map size: {case[0]} skipped')
+                continue
+
             print(f"test set: {case[0]} length {case[1]} agents {case[2]} density")
             with open(f'./test_set/{case[0]}length_{case[1]}agents_{case[2]}density.pth', 'rb') as f:
                 tests = pickle.load(f)
@@ -125,10 +133,20 @@ def test_model(model_range: Union[int, tuple], datetime: str, test_set: Tuple = 
             tests = [(test, network) for test in tests]
 
             # using mp
-            # ret = pool.map(test_one_case, tests)
-            # success, steps, num_comm = zip(*ret)
+            ret = pool.map(test_one_case, tests)
+            success, steps, num_comm = zip(*ret)
 
-            success, steps, num_comm = test_one_case(tests)
+            # # without mp
+            # success = np.zeros(len(tests))
+            # steps = np.zeros(len(tests))
+            # num_comm = np.zeros(len(tests))
+            #
+            # for id, test in enumerate(tests):
+            #     su, st, comm = test_one_case(test)
+            #
+            #     success[id] = su
+            #     steps[id] = st
+            #     num_comm[id] = comm
 
             success_rate = sum(success) / len(success) * 100
             avg_steps = sum(steps) / len(steps)
@@ -147,6 +165,14 @@ def test_model(model_range: Union[int, tuple], datetime: str, test_set: Tuple = 
             print("success rate: {:.2f}%".format(success_rate))
             print(f"average step: {avg_steps}")
             print(f"communication times: {commu_times}")
+
+            if avg_steps == 256 or success_rate == 0:
+                print(f'max steps reached, skipping other test cases with the same map size')
+
+                should_skip.append(map_size)
+                # test_set = remove_map(list(test_set), map_size)
+                continue
+
             print()
 
         print('\n')
@@ -226,10 +252,14 @@ if __name__ == '__main__':
     # for i in range(10000, 150001, 10000):
         # test_model(model_range=str(i), datetime='22-07-21_at_17.42.12',)
 
-    # test_model(model_range=(30000, 60000), datetime='22-07-21_at_17.42.12') # 667390
-    test_model(model_range=(70000, 90000), datetime='22-07-21_at_17.42.12') # 667392
+    # obs radius = 4
+    # test_model(model_range=(40000, 60000), datetime='22-07-21_at_17.42.12') # 667390
+    # test_model(model_range=(80000, 90000), datetime='22-07-21_at_17.42.12') # 667392
     # test_model(model_range=(100000, 120000), datetime='22-07-21_at_17.42.12') # 667387
     # test_model(model_range=(130000, 150000), datetime='22-07-21_at_17.42.12')
+
+    # obs radius = 5
+    test_model(model_range=(10000, 150000), datetime='22-07-23_at_13.16.32')
 
     # ncpus = int(os.environ["SLURM_JOB_CPUS_PER_NODE"])
     # # pool = mp.Pool(mp.cpu_count()//2) # don't run this in ICDC server
