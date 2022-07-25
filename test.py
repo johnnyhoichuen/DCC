@@ -249,8 +249,8 @@ if __name__ == '__main__':
 
     # load trained model and reproduce results in paper
 
-    # for i in range(10000, 150001, 10000):
-        # test_model(model_range=str(i), datetime='22-07-21_at_17.42.12',)
+    # first trained model
+    test_model(model_range=(150000, 150001), datetime='22-07-05_at_18.09.42')
 
     # obs radius = 4
     # test_model(model_range=(40000, 60000), datetime='22-07-21_at_17.42.12') # 667390
@@ -259,7 +259,7 @@ if __name__ == '__main__':
     # test_model(model_range=(130000, 150000), datetime='22-07-21_at_17.42.12')
 
     # obs radius = 5
-    test_model(model_range=(10000, 150000), datetime='22-07-23_at_13.16.32')
+    # test_model(model_range=(10000, 150000), datetime='22-07-23_at_13.16.32')
 
     # ncpus = int(os.environ["SLURM_JOB_CPUS_PER_NODE"])
     # # pool = mp.Pool(mp.cpu_count()//2) # don't run this in ICDC server

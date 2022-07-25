@@ -21,8 +21,9 @@ action_dim = 5
 # basic training setting
 num_actors = 2
 log_interval = 10
-training_steps = 150000
-save_interval = 10000
+# training_steps = 150000
+training_steps = 1200000
+save_interval = 50000
 gamma = 0.99
 batch_size = 128
 learning_starts = 50000
