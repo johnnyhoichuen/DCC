@@ -19,6 +19,7 @@ action_dim = 5
 ############################################################
 
 # basic training setting
+num_test_cpu = 0 # do not change this
 num_actors = 2
 log_interval = 10
 # training_steps = 150000 # original

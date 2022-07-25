@@ -1,5 +1,6 @@
 '''create test set and test model'''
 import os
+import sys
 import random
 import pickle
 from typing import Tuple, Union
@@ -57,7 +58,7 @@ def test_model(model_range: Union[int, tuple], datetime: str, test_set: Tuple = 
 
     print(f'cpu used for testing: {config.num_actors}')
     # pool = mp.Pool(mp.cpu_count()//2) # don't run this in ICDC server
-    pool = mp.Pool(config.num_actors)
+    pool = mp.Pool(config.num_test_cpu)
 
     print(f'testing network')
 
@@ -250,7 +251,7 @@ if __name__ == '__main__':
     # load trained model and reproduce results in paper
 
     # first trained model
-    test_model(model_range=(150000, 150001), datetime='22-07-05_at_18.09.42')
+    # test_model(model_range=(150000, 150001), datetime='22-07-05_at_18.09.42')
 
     # obs radius = 4
     # test_model(model_range=(40000, 60000), datetime='22-07-21_at_17.42.12') # 667390
@@ -260,6 +261,11 @@ if __name__ == '__main__':
 
     # obs radius = 5
     # test_model(model_range=(10000, 150000), datetime='22-07-23_at_13.16.32')
+
+    # with ray mp
+    config.num_test_cpu = int(sys.argv[1])
+
+    test_model(model_range=(750000, 750001), datetime='22-07-25_at_13.22.40')
 
     # ncpus = int(os.environ["SLURM_JOB_CPUS_PER_NODE"])
     # # pool = mp.Pool(mp.cpu_count()//2) # don't run this in ICDC server
