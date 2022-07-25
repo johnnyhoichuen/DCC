@@ -21,7 +21,7 @@ def main(num_actors=config.num_actors, log_interval=config.log_interval):
     time.sleep(1)
     actors = [Actor.remote(i, 0.4**(1+(i/(num_actors-1))*7), learner, buffer) for i in range(num_actors)]
 
-    print(f'testing actor input params')
+    print(f'actors\' epsilons')
     for i in range(num_actors):
         print(f'0.4**(1+(i/(num_actors-1))*7): {0.4**(1+(i/(num_actors-1))*7)}')
 
@@ -36,7 +36,7 @@ def main(num_actors=config.num_actors, log_interval=config.log_interval):
     print('start training')
     buffer.run.remote()
     learner.run.remote()
-    
+
     done = False
     while not done:
         time.sleep(log_interval)
