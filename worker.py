@@ -17,7 +17,7 @@ from environment import Environment
 from buffer import SumTree, LocalBuffer, EpisodeData
 import config
 
-@ray.remote(num_cpus=1)
+@ray.remote()
 class GlobalBuffer:
     def __init__(self, buffer_capacity=config.buffer_capacity, init_env_settings=config.init_env_settings,
                 alpha=config.prioritized_replay_alpha, beta=config.prioritized_replay_beta, chunk_capacity=config.chunk_capacity):
@@ -263,7 +263,7 @@ class GlobalBuffer:
 
 
 
-@ray.remote(num_cpus=1, num_gpus=1)
+@ray.remote()
 class Learner:
     def __init__(self, buffer: GlobalBuffer):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -387,7 +387,7 @@ class Learner:
         return self.done
 
 
-@ray.remote(num_cpus=1)
+@ray.remote()
 class Actor:
     def __init__(self, worker_id: int, epsilon: float, learner: Learner, buffer: GlobalBuffer):
         self.id = worker_id

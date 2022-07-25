@@ -1,4 +1,5 @@
 import os
+import sys
 import random
 import time
 import torch
@@ -14,12 +15,16 @@ random.seed(0)
 
 
 def main(num_actors=config.num_actors, log_interval=config.log_interval):
-    ray.init()
+    num_cpus = int(sys.argv[1])
+    # address = sys.argv[2]
+
+    # ray.init()
+    ray.init(address=os.environ["ip_head"])
 
     buffer = GlobalBuffer.remote()
     learner = Learner.remote(buffer)
     time.sleep(1)
-    actors = [Actor.remote(i, 0.4**(1+(i/(num_actors-1))*7), learner, buffer) for i in range(num_actors)]
+    actors = [Actor.remote(i, 0.4**(1+(i/(num_actors-1))*7), learner, buffer) for i in range(num_cpus)]
 
     print(f'testing actor input params')
     for i in range(num_actors):
