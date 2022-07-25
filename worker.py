@@ -282,6 +282,9 @@ class Learner:
 
         self.store_weights()
 
+        print("ray.get_gpu_ids(): {}".format(ray.get_gpu_ids()))
+        print("CUDA_VISIBLE_DEVICES: {}".format(os.environ["CUDA_VISIBLE_DEVICES"]))
+
     def get_weights(self):
         return self.weights_id
 
