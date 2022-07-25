@@ -3,7 +3,6 @@ import random
 import time
 import torch
 import numpy as np
-import ray
 from worker import GlobalBuffer, Learner, Actor
 import config
 
@@ -14,34 +13,37 @@ random.seed(0)
 
 
 def main(num_actors=config.num_actors, log_interval=config.log_interval):
-    ray.init()
-
-    buffer = GlobalBuffer.remote()
-    learner = Learner.remote(buffer)
+    buffer = GlobalBuffer()
+    learner = Learner(buffer)
     time.sleep(1)
-    actors = [Actor.remote(i, 0.4**(1+(i/(num_actors-1))*7), learner, buffer) for i in range(num_actors)]
+    actors = [Actor(i, 0.4**(1+(i/(num_actors-1))*7), learner, buffer) for i in range(num_actors)]
 
     print(f'actors\' epsilons')
     for i in range(num_actors):
         print(f'0.4**(1+(i/(num_actors-1))*7): {0.4**(1+(i/(num_actors-1))*7)}')
 
     for actor in actors:
-        actor.run.remote()
+        actor.run()
 
-    while not ray.get(buffer.ready.remote()): # when buffer length == config.learning_starts
+    while not buffer.ready(): # when buffer length == config.learning_starts
         time.sleep(5)
-        ray.get(learner.stats.remote(5))
-        ray.get(buffer.stats.remote(5))
+        learner.stats(5)
+        buffer.stats(5)
+
+    while not buffer.ready(): # when buffer length == config.learning_starts
+        time.sleep(5)
+        learner.stats(5)
+        buffer.stats(5)
 
     print('start training')
-    buffer.run.remote()
-    learner.run.remote()
+    buffer.run()
+    learner.run()
 
     done = False
     while not done:
         time.sleep(log_interval)
-        done = ray.get(learner.stats.remote(log_interval))
-        ray.get(buffer.stats.remote(log_interval))
+        done = learner.stats(log_interval)
+        buffer.stats(log_interval)
         print()
 
 if __name__ == '__main__':

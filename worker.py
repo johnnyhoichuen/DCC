@@ -4,7 +4,6 @@ import os
 from copy import deepcopy
 from typing import Deque, List, Tuple
 import threading
-import ray
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,7 +16,6 @@ from environment import Environment
 from buffer import SumTree, LocalBuffer, EpisodeData
 import config
 
-@ray.remote(num_cpus=1)
 class GlobalBuffer:
     def __init__(self, buffer_capacity=config.buffer_capacity, init_env_settings=config.init_env_settings,
                 alpha=config.prioritized_replay_alpha, beta=config.prioritized_replay_beta, chunk_capacity=config.chunk_capacity):
@@ -60,9 +58,10 @@ class GlobalBuffer:
         while True:
             if len(self.batched_data) <= 4:
                 data = self._sample_batch(config.batch_size)
-                data_id = ray.put(data)
-                self.batched_data.append(data_id)
-                
+                # data_id = ray.put(data)
+                # self.batched_data.append(data_id)
+                self.batched_data.append(data)
+
             else:
                 time.sleep(0.1)
         
@@ -74,8 +73,9 @@ class GlobalBuffer:
         if len(self.batched_data) == 0:
             print('no prepared data')
             data = self._sample_batch(config.batch_size)
-            data_id = ray.put(data)
-            return data_id
+            # data_id = ray.put(data)
+            # return data_id
+            return data
         else:
             return self.batched_data.pop(0)
 
@@ -248,7 +248,8 @@ class GlobalBuffer:
                     if add_map_key not in self.stat_dict:
                         self.stat_dict[add_map_key] = []
                 
-        self.env_settings_set = ray.put(list(self.stat_dict.keys()))
+        # self.env_settings_set = ray.put(list(self.stat_dict.keys()))
+        self.env_settings_set = list(self.stat_dict.keys())
 
         self.counter = 0
 
@@ -263,7 +264,6 @@ class GlobalBuffer:
 
 
 
-@ray.remote(num_cpus=1, num_gpus=1)
 class Learner:
     def __init__(self, buffer: GlobalBuffer):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -282,8 +282,8 @@ class Learner:
 
         self.store_weights()
 
-        print("ray.get_gpu_ids(): {}".format(ray.get_gpu_ids()))
-        print("CUDA_VISIBLE_DEVICES: {}".format(os.environ["CUDA_VISIBLE_DEVICES"]))
+        # print("ray.get_gpu_ids(): {}".format(ray.get_gpu_ids()))
+        # print("CUDA_VISIBLE_DEVICES: {}".format(os.environ["CUDA_VISIBLE_DEVICES"]))
 
     def get_weights(self):
         return self.weights_id
@@ -292,7 +292,8 @@ class Learner:
         state_dict = self.model.state_dict()
         for k, v in state_dict.items():
             state_dict[k] = v.cpu()
-        self.weights_id = ray.put(state_dict)
+        # self.weights_id = ray.put(state_dict)
+        self.weights_id = state_dict
 
     def run(self):
         self.learning_thread = threading.Thread(target=self._train, daemon=True)
@@ -306,8 +307,9 @@ class Learner:
         for i in range(1, config.training_steps+1):
 
             # get a batch of data
-            data_id = ray.get(self.buffer.get_batched_data.remote())
-            data = ray.get(data_id)
+            # data_id = ray.get(self.buffer.get_batched_data.remote())
+            # data = ray.get(data_id)
+            data = self.buffer.get_batched_data()
 
             b_obs, b_last_act, b_action, b_reward, b_gamma, b_steps, b_hidden, b_relative_pos, b_comm_mask, idxes, weights, old_ptr = data
             b_obs, b_last_act, b_action, b_reward = b_obs.to(self.device), b_last_act.to(self.device), b_action.to(self.device), b_reward.to(self.device)
@@ -354,7 +356,7 @@ class Learner:
             if i % 2  == 0:
                 self.store_weights()
 
-            self.buffer.update_priorities.remote(idxes, priorities, old_ptr)
+            self.buffer.update_priorities(idxes, priorities, old_ptr)
 
             self.counter += 1
 
@@ -387,7 +389,6 @@ class Learner:
         return self.done
 
 
-@ray.remote(num_cpus=1)
 class Actor:
     def __init__(self, worker_id: int, epsilon: float, learner: Learner, buffer: GlobalBuffer):
         self.id = worker_id
@@ -432,7 +433,7 @@ class Actor:
                                                                             torch.from_numpy(next_pos.astype(np.int)))
                     data = local_buffer.finish(q_val[0], relative_pos, comm_mask)
 
-                self.global_buffer.add.remote(data)
+                self.global_buffer.add(data)
                 done = False
                 obs, last_act, pos, local_buffer = self._reset()
 
@@ -444,12 +445,16 @@ class Actor:
     def _update_weights(self):
         '''load weights from learner'''
         # update network parameters
-        weights_id = ray.get(self.learner.get_weights.remote())
-        weights = ray.get(weights_id)
+        # weights_id = ray.get(self.learner.get_weights.remote())
+        # weights = ray.get(weights_id)
+        weights_id = self.learner.get_weights()
+        weights = weights_id
         self.model.load_state_dict(weights)
         # update environment settings set (number of agents and map size)
-        new_env_settings_set = ray.get(self.global_buffer.get_env_settings.remote())
-        self.env.update_env_settings_set(ray.get(new_env_settings_set))
+        # new_env_settings_set = ray.get(self.global_buffer.get_env_settings.remote())
+        # self.env.update_env_settings_set(ray.get(new_env_settings_set))
+        new_env_settings_set = self.global_buffer.get_env_settings()
+        self.env.update_env_settings_set(new_env_settings_set)
     
     def _reset(self):
         self.model.reset()
