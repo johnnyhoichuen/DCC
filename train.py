@@ -28,7 +28,7 @@ def main(num_actors=config.num_actors, log_interval=config.log_interval):
     for actor in actors:
         actor.run.remote()
 
-    while not ray.get(buffer.ready.remote()):
+    while not ray.get(buffer.ready.remote()): # when buffer length == config.learning_starts
         time.sleep(5)
         ray.get(learner.stats.remote(5))
         ray.get(buffer.stats.remote(5))
