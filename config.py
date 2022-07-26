@@ -18,12 +18,15 @@ action_dim = 5
 ####################         DQN        ####################
 ############################################################
 
-# basic training setting
+# default infrastructure setting
 num_actors = 6
 log_interval = 10
 # training_steps = 150000 # original
 training_steps = round(2400000/num_actors)
 save_interval = round(training_steps * 0.05)
+print(f'save_interval: {save_interval}, training_steps: {training_steps}')
+
+# basic training setting
 gamma = 0.99
 batch_size = 128
 learning_starts = 50000
