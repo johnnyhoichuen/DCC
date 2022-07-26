@@ -17,7 +17,7 @@ from environment import Environment
 from buffer import SumTree, LocalBuffer, EpisodeData
 import config
 
-@ray.remote
+@ray.remote(num_cpus=1)
 class GlobalBuffer:
     def __init__(self, buffer_capacity=config.buffer_capacity, init_env_settings=config.init_env_settings,
                 alpha=config.prioritized_replay_alpha, beta=config.prioritized_replay_beta, chunk_capacity=config.chunk_capacity):
@@ -62,10 +62,10 @@ class GlobalBuffer:
                 data = self._sample_batch(config.batch_size)
                 data_id = ray.put(data)
                 self.batched_data.append(data_id)
-                
+
             else:
                 time.sleep(0.1)
-        
+
     def get_batched_data(self):
         '''
         get one batch of data, called by learner.
@@ -115,9 +115,9 @@ class GlobalBuffer:
                 self.num_agents_buf[self.ptr] = data.num_agents
 
                 self.ptr = (self.ptr+1) % self.num_chunks
-            
+
             del data
-            
+
 
     def _sample_batch(self, batch_size: int) -> Tuple:
 
@@ -133,7 +133,7 @@ class GlobalBuffer:
             max_num_agents = np.max(self.num_agents_buf[global_idxes])
 
             for global_idx, local_idx in zip(global_idxes.tolist(), local_idxes.tolist()):
-                
+
                 assert local_idx < self.size_buf[global_idx], \
                     'index is {} but size is {}, p {}'.format(local_idx, self.size_buf[global_idx], self.priority_tree[local_idx])
 
@@ -239,15 +239,15 @@ class GlobalBuffer:
             # print('{}: {}/{}'.format(key, sum(val), len(val)))
             if len(val) == config.cl_history_size and sum(val) >= config.cl_history_size*config.pass_rate:
                 # add number of agents
-                add_agent_key = (key[0]+1, key[1]) 
+                add_agent_key = (key[0]+1, key[1])
                 if add_agent_key[0] <= config.max_num_agents and add_agent_key not in self.stat_dict:
                     self.stat_dict[add_agent_key] = []
-                
+
                 if key[1] < config.max_map_lenght:
-                    add_map_key = (key[0], key[1]+5) 
+                    add_map_key = (key[0], key[1]+5)
                     if add_map_key not in self.stat_dict:
                         self.stat_dict[add_map_key] = []
-                
+
         self.env_settings_set = ray.put(list(self.stat_dict.keys()))
 
         self.counter = 0
@@ -257,15 +257,37 @@ class GlobalBuffer:
             return True
         else:
             return False
-    
+
     def get_env_settings(self):
         return self.env_settings_set
 
 
+@ray.remote(num_cpus=1)
+class ModelSaver:
+    def __init__(self):
+        self.state_dict = []
 
-@ray.remote
+    def save_model(self, model, steps):
+        print('saving model!!')
+
+        # self.state_dict.append(model.state_dict())
+
+        # # create dir
+        # path = os.path.join(os.getcwd(), f'{config.save_path}')
+        # print(f'cwd: {os.getcwd()}')
+        # print(f'path to save: {path}')
+
+        # if not os.path.exists(path):
+        #     os.mkdir(path)
+        #     print(f'directory {path} created')
+
+        # torch.save(model.state_dict(), os.path.join(config.save_path, f'{steps}.pth'))
+
+        # print('model saved at step {}'.format(steps))
+
+@ray.remote(num_gpus=4, num_cpus=2)
 class Learner:
-    def __init__(self, buffer: GlobalBuffer):
+    def __init__(self, buffer: GlobalBuffer, model_saver: ModelSaver):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = Network()
         self.model.to(self.device)
@@ -282,6 +304,11 @@ class Learner:
 
         self.store_weights()
 
+        self.model_saver = model_saver
+
+        self.state_dict_step = 0
+        self.state_dict = {}
+
         print("ray.get_gpu_ids(): {}".format(ray.get_gpu_ids()))
         print("CUDA_VISIBLE_DEVICES: {}".format(os.environ["CUDA_VISIBLE_DEVICES"]))
 
@@ -295,10 +322,11 @@ class Learner:
         self.weights_id = ray.put(state_dict)
 
     def run(self):
-        self.learning_thread = threading.Thread(target=self._train, daemon=True)
+        self.learning_thread = threading.Thread(target=self._train, daemon=True, args=(self.state_dict, self.state_dict_step))
         self.learning_thread.start()
 
-    def _train(self):
+    def _train(self, state_dict, state_dict_step):
+        print('training')
         scaler = GradScaler()
         b_seq_len = torch.LongTensor(config.batch_size)
         b_seq_len[:] = config.burn_in_steps+1
@@ -347,7 +375,7 @@ class Learner:
 
             scaler.step(self.optimizer)
             scaler.update()
-            
+
             self.scheduler.step()
 
             # store new weights in shared memory
@@ -361,15 +389,45 @@ class Learner:
             # update target network, save model
             if i % config.target_network_update_freq == 0:
                 self.tar_model.load_state_dict(self.model.state_dict())
-            
+
             if i % config.save_interval == 0:
-                # create dir
-                path = os.path.join(os.getcwd(), f'{config.save_path}')
+                ray.get(self.model_saver.save_model.remote(self.model, i))
 
-                if not os.path.exists(path):
-                    os.mkdir(path)
+                state_dict = self.model.state_dict()
 
-                torch.save(self.model.state_dict(), os.path.join(config.save_path, f'{self.counter}.pth'))
+
+                # try solving with this
+    # from threading import Thread
+
+    # # global var
+    # radom_global_var = 5
+
+    # def function():
+    #     global random_global_var
+    #     random_global_var += 1
+
+    # domath = Thread(target=function)
+    # domath.start()
+    # domath.join()
+    # print(random_global_var)
+
+    # result: 6
+
+
+
+
+                # # create dir
+                # path = os.path.join(os.getcwd(), f'{config.save_path}')
+                # print(f'cwd: {os.getcwd()}')
+                # print(f'path to save: {path}')
+
+                # if not os.path.exists(path):
+                #     os.mkdir(path)
+                #     print(f'directory {path} created')
+
+                # torch.save(self.model.state_dict(), os.path.join(config.save_path, f'{self.counter}.pth'))
+
+                # print('model saved at step {}'.format(i))
 
         self.done = True
 
@@ -381,13 +439,28 @@ class Learner:
         print('update speed: {}/s'.format((self.counter-self.last_counter)/interval))
         if self.counter != self.last_counter:
             print('loss: {:.4f}'.format(self.loss/(self.counter-self.last_counter)))
-        
+
         self.last_counter = self.counter
         self.loss = 0
         return self.done
 
 
-@ray.remote
+# @ray.remote(num_cpus=1)
+# def save_model(model, steps):
+#     # create dir
+#     path = os.path.join(os.getcwd(), f'{config.save_path}')
+#     print(f'cwd: {os.getcwd()}')
+#     print(f'path to save: {path}')
+
+#     if not os.path.exists(path):
+#         os.mkdir(path)
+#         print(f'directory {path} created')
+
+#     torch.save(model.state_dict(), os.path.join(config.save_path, f'{steps}.pth'))
+
+#     print('model saved at step {}'.format(steps))
+
+@ray.remote(num_cpus=1)
 class Actor:
     def __init__(self, worker_id: int, epsilon: float, learner: Learner, buffer: GlobalBuffer):
         self.id = worker_id
@@ -403,12 +476,12 @@ class Actor:
     def run(self):
         done = False
         obs, last_act, pos, local_buffer = self._reset() # came from env.observe()
-        
+
         while True:
 
             # sample action
             actions, q_val, hidden, relative_pos, comm_mask = self.model.step(torch.from_numpy(obs.astype(np.float32)),
-                                                                            torch.from_numpy(last_act.astype(np.float32)), 
+                                                                            torch.from_numpy(last_act.astype(np.float32)),
                                                                             torch.from_numpy(pos.astype(np.int)))
 
             if random.random() < self.epsilon:
@@ -427,8 +500,8 @@ class Actor:
                 if done:
                     data = local_buffer.finish()
                 else:
-                    _, q_val, _, relative_pos, comm_mask = self.model.step(torch.from_numpy(next_obs.astype(np.float32)), 
-                                                                            torch.from_numpy(last_act.astype(np.float32)), 
+                    _, q_val, _, relative_pos, comm_mask = self.model.step(torch.from_numpy(next_obs.astype(np.float32)),
+                                                                            torch.from_numpy(last_act.astype(np.float32)),
                                                                             torch.from_numpy(next_pos.astype(np.int)))
                     data = local_buffer.finish(q_val[0], relative_pos, comm_mask)
 
@@ -450,7 +523,7 @@ class Actor:
         # update environment settings set (number of agents and map size)
         new_env_settings_set = ray.get(self.global_buffer.get_env_settings.remote())
         self.env.update_env_settings_set(ray.get(new_env_settings_set))
-    
+
     def _reset(self):
         self.model.reset()
         obs, last_act, pos = self.env.reset()
