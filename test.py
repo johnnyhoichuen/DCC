@@ -1,11 +1,15 @@
 '''create test set and test model'''
 import os
+import sys
 import random
 import pickle
 from typing import Tuple, Union
 import warnings
 from pathlib import Path
 import csv
+import ray
+
+import time
 
 warnings.simplefilter("ignore", UserWarning)
 from tqdm import tqdm
@@ -20,7 +24,7 @@ import config
 torch.manual_seed(config.test_seed)
 np.random.seed(config.test_seed)
 random.seed(config.test_seed)
-DEVICE = torch.device('cpu')
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 torch.set_num_threads(1)
 
 
@@ -46,7 +50,7 @@ def create_test(test_env_settings: Tuple = config.test_env_settings, num_test_ca
         with open(name, 'wb') as f:
             pickle.dump(tests, f)
 
-
+@ray.remote
 def test_model(model_range: Union[int, tuple], datetime: str, test_set: Tuple = config.test_env_settings):
     '''
     test model in 'saved_models' folder
@@ -133,7 +137,8 @@ def test_model(model_range: Union[int, tuple], datetime: str, test_set: Tuple = 
             tests = [(test, network) for test in tests]
 
             # using mp
-            ret = pool.map(test_one_case, tests)
+            # ret = pool.map(test_one_case, tests)
+            ret = test_one_case.remote(tests)
             success, steps, num_comm = zip(*ret)
 
             # # without mp
@@ -225,8 +230,50 @@ def code_test():
 #     else:
 #         return array
 
+@ray.remote
+def foo(some_str):
+    print(some_str)
+    time.sleep(1)
+
+@ray.remote
+class Foo(object):
+    def __init__(self):
+        self.value = 0
+
+    def save_model(self):
+        self.value += 1
+        print(f'say sth')
+
+        # create dir
+        model = Network()
+        # model.to('cuda')
+
+        path = os.path.join(os.getcwd(), f'{config.save_path}')
+        print(f'cwd: {os.getcwd()}')
+        print(f'path to save: {path}')
+
+        if not os.path.exists(path):
+            print('path does not exist, creating')
+            os.mkdir(path)
+        else:
+            print('path exists')
+
+        dict = torch.save(model.state_dict(), os.path.join(config.save_path, f'{111}.pth'))
+        print(f'dict type: {type(dict)}')
+
+        # return self.value
 
 if __name__ == '__main__':
+    num_cpus = int(sys.argv[1])
+    # address = sys.argv[2]
+    print(f'test.py args: {sys.argv}')
+
+    config.num_actors = num_cpus
+    config.training_steps = round(2400000/config.num_actors)
+    config.save_interval = round(config.training_steps * 0.05)
+
+    print(f'updated save_interval: {config.save_interval}, training_steps: {config.training_steps}')
+
     # from datetime import datetime
     # time = datetime.now().strftime("%y-%m-%d at %H.%M.%S")
     # save_path = f'./saved_models/{time}'
@@ -239,18 +286,24 @@ if __name__ == '__main__':
     # print(path)
     # os.mkdir(path) # windows
 
-    # samples = {
-    #     'weights': np.zeros(shape=32, dtype=np.float32),
-    #     'indexes': np.zeros(shape=32, dtype=np.int32)
-    # }
-    # print(samples)
+    # testing ray
+    foo.remote('test str')
 
-    # code_test()
+    def threadfunc():
+        print('threadfunc')
 
-    # load trained model and reproduce results in paper
+    # save model via threading
+    from threading import Thread
+    thread = Thread(target=threadfunc, args=())
+    thread.start()
+
+    foo = Foo.remote()
+    ray.get(foo.save_model.remote())
+
+
 
     # first trained model
-    test_model(model_range=(150000, 150001), datetime='22-07-05_at_18.09.42')
+    # test_model.remote(model_range=(150000, 150001), datetime='22-07-05_at_18.09.42')
 
     # obs radius = 4
     # test_model(model_range=(40000, 60000), datetime='22-07-21_at_17.42.12') # 667390
@@ -267,4 +320,4 @@ if __name__ == '__main__':
     # print(f'using mp {mp.cpu_count()} cpus')
 
 
-    print('testing done')
+    print()
