@@ -50,6 +50,7 @@ def create_test(test_env_settings: Tuple = config.test_env_settings, num_test_ca
         with open(name, 'wb') as f:
             pickle.dump(tests, f)
 
+@ray.remote
 def test_model(model_range: Union[int, tuple], interval, datetime: str, test_set: Tuple = config.test_env_settings):
     '''
     test model in 'saved_models' folder
@@ -58,9 +59,9 @@ def test_model(model_range: Union[int, tuple], interval, datetime: str, test_set
     network.eval()
     network.to(DEVICE)
 
-    print(f'cpu used for testing: {config.num_actors}')
-    # pool = mp.Pool(mp.cpu_count()//2) # don't run this in ICDC server
-    pool = mp.Pool(config.num_actors)
+    print(f'cpu available for testing: {mp.cpu_count()//2}')
+    pool = mp.Pool(mp.cpu_count()//2) # don't run this in ICDC server
+    # pool = mp.Pool(config.num_actors)
 
     print(f'testing network')
 
@@ -275,6 +276,11 @@ class Foo(object):
         return getattr(self, attr)
 
 if __name__ == '__main__':
+    start_range = int(sys.argv[1])
+    end_range = int(sys.argv[2])
+
+    test_model.remote(model_range=(start_range, end_range), interval=7500, datetime='22-07-26_at_18.43.26')
+
     # num_cpus = int(sys.argv[1])
     # # address = sys.argv[2]
     # print(f'test.py args: {sys.argv}')
@@ -320,7 +326,7 @@ if __name__ == '__main__':
     # test_model(model_range=(130000, 150000), datetime='22-07-21_at_17.42.12')
 
     # model trained with 16 actors
-    test_model(model_range=(127500, 130000), interval=7500, datetime='22-07-26_at_18.43.26')
+    # test_model(model_range=(120000, 120001), interval=7500, datetime='22-07-26_at_18.43.26')
 
     # obs radius = 5
     # test_model(model_range=(10000, 150000), datetime='22-07-23_at_13.16.32')
