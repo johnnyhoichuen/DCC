@@ -24,7 +24,7 @@ import config
 torch.manual_seed(config.test_seed)
 np.random.seed(config.test_seed)
 random.seed(config.test_seed)
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+DEVICE = torch.device('cpu')
 torch.set_num_threads(1)
 
 
@@ -50,8 +50,7 @@ def create_test(test_env_settings: Tuple = config.test_env_settings, num_test_ca
         with open(name, 'wb') as f:
             pickle.dump(tests, f)
 
-@ray.remote
-def test_model(model_range: Union[int, tuple], datetime: str, test_set: Tuple = config.test_env_settings):
+def test_model(model_range: Union[int, tuple], interval, datetime: str, test_set: Tuple = config.test_env_settings):
     '''
     test model in 'saved_models' folder
     '''
@@ -113,7 +112,7 @@ def test_model(model_range: Union[int, tuple], datetime: str, test_set: Tuple = 
 
     print(f'testing model ranging from {model_range[0]} to {model_range[1]}')
 
-    for model_name in range(model_range[0], model_range[1] + 1, config.save_interval):
+    for model_name in range(model_range[0], model_range[1] + 1, interval):
         state_dict = torch.load(os.path.join(config.test_model_path, f'{datetime}/{model_name}.pth'),
                             map_location=DEVICE)
         network.load_state_dict(state_dict)
@@ -137,8 +136,8 @@ def test_model(model_range: Union[int, tuple], datetime: str, test_set: Tuple = 
             tests = [(test, network) for test in tests]
 
             # using mp
-            # ret = pool.map(test_one_case, tests)
-            ret = test_one_case.remote(tests)
+            ret = pool.map(test_one_case, tests)
+            # ret = test_one_case.remote(tests)
             success, steps, num_comm = zip(*ret)
 
             # # without mp
@@ -235,10 +234,16 @@ def foo(some_str):
     print(some_str)
     time.sleep(1)
 
-@ray.remote
+@ray.remote(num_gpus=1)
 class Foo(object):
     def __init__(self):
         self.value = 0
+
+    def run(self):
+        # save model via threading
+        from threading import Thread
+        thread = Thread(target=self.save_model, args=())
+        thread.start()
 
     def save_model(self):
         self.value += 1
@@ -258,21 +263,27 @@ class Foo(object):
         else:
             print('path exists')
 
-        dict = torch.save(model.state_dict(), os.path.join(config.save_path, f'{111}.pth'))
+        for i in range(10):
+            print(f'saving model {i}')
+            dict = torch.save(model.state_dict(), os.path.join(config.save_path, f'test_{i}.pth'))
+
         print(f'dict type: {type(dict)}')
 
         # return self.value
 
+    def get_attr(self, attr):
+        return getattr(self, attr)
+
 if __name__ == '__main__':
-    num_cpus = int(sys.argv[1])
-    # address = sys.argv[2]
-    print(f'test.py args: {sys.argv}')
+    # num_cpus = int(sys.argv[1])
+    # # address = sys.argv[2]
+    # print(f'test.py args: {sys.argv}')
 
-    config.num_actors = num_cpus
-    config.training_steps = round(2400000/config.num_actors)
-    config.save_interval = round(config.training_steps * 0.05)
+    # config.num_actors = num_cpus
+    # config.training_steps = round(2400000/config.num_actors)
+    # config.save_interval = round(config.training_steps * 0.05)
 
-    print(f'updated save_interval: {config.save_interval}, training_steps: {config.training_steps}')
+    # print(f'updated save_interval: {config.save_interval}, training_steps: {config.training_steps}')
 
     # from datetime import datetime
     # time = datetime.now().strftime("%y-%m-%d at %H.%M.%S")
@@ -287,18 +298,13 @@ if __name__ == '__main__':
     # os.mkdir(path) # windows
 
     # testing ray
-    foo.remote('test str')
-
-    def threadfunc():
-        print('threadfunc')
-
-    # save model via threading
-    from threading import Thread
-    thread = Thread(target=threadfunc, args=())
-    thread.start()
-
-    foo = Foo.remote()
-    ray.get(foo.save_model.remote())
+    # foo.remote('test str')
+    # def threadfunc():
+    #     print('threadfunc')
+    # foo = Foo.remote()
+    # # value = ray.get(foo.get_attr.remote('value'))
+    # # print(f'value: {value}')
+    # ray.get(foo.run.remote())
 
 
 
@@ -306,10 +312,15 @@ if __name__ == '__main__':
     # test_model.remote(model_range=(150000, 150001), datetime='22-07-05_at_18.09.42')
 
     # obs radius = 4
+
+    # model trained with 2 actors
     # test_model(model_range=(40000, 60000), datetime='22-07-21_at_17.42.12') # 667390
     # test_model(model_range=(80000, 90000), datetime='22-07-21_at_17.42.12') # 667392
     # test_model(model_range=(100000, 120000), datetime='22-07-21_at_17.42.12') # 667387
     # test_model(model_range=(130000, 150000), datetime='22-07-21_at_17.42.12')
+
+    # model trained with 16 actors
+    test_model(model_range=(127500, 130000), interval=7500, datetime='22-07-26_at_18.43.26')
 
     # obs radius = 5
     # test_model(model_range=(10000, 150000), datetime='22-07-23_at_13.16.32')
