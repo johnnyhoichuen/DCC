@@ -285,7 +285,7 @@ class ModelSaver:
 
         # print('model saved at step {}'.format(steps))
 
-@ray.remote(num_gpus=4, num_cpus=2)
+@ray.remote(num_gpus=2, num_cpus=1)
 class Learner:
     def __init__(self, buffer: GlobalBuffer, model_saver: ModelSaver):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -305,9 +305,12 @@ class Learner:
         self.store_weights()
 
         self.model_saver = model_saver
+        self.temp_state_dict = None
 
         self.state_dict_step = 0
-        self.state_dict = {}
+        self.state_dict = 'fake original state dict'
+
+        # self.learning_thread = thread
 
         print("ray.get_gpu_ids(): {}".format(ray.get_gpu_ids()))
         print("CUDA_VISIBLE_DEVICES: {}".format(os.environ["CUDA_VISIBLE_DEVICES"]))
@@ -322,10 +325,10 @@ class Learner:
         self.weights_id = ray.put(state_dict)
 
     def run(self):
-        self.learning_thread = threading.Thread(target=self._train, daemon=True, args=(self.state_dict, self.state_dict_step))
+        self.learning_thread = threading.Thread(target=self._train, daemon=True)#, args=(self.state_dict, self.state_dict_step))
         self.learning_thread.start()
 
-    def _train(self, state_dict, state_dict_step):
+    def _train(self):#, state_dict, state_dict_step):
         print('training')
         scaler = GradScaler()
         b_seq_len = torch.LongTensor(config.batch_size)
@@ -391,43 +394,17 @@ class Learner:
                 self.tar_model.load_state_dict(self.model.state_dict())
 
             if i % config.save_interval == 0:
-                ray.get(self.model_saver.save_model.remote(self.model, i))
 
-                state_dict = self.model.state_dict()
+                # create dir
+                path = os.path.join(os.getcwd(), f'{config.save_path}')
+                # print(f'cwd: {os.getcwd()0, path to save: {path}}')
 
+                if not os.path.exists(path):
+                    os.mkdir(path)
 
-                # try solving with this
-    # from threading import Thread
+                torch.save(self.model.state_dict(), os.path.join(f'{path}', f'{self.counter}.pth'))
 
-    # # global var
-    # radom_global_var = 5
-
-    # def function():
-    #     global random_global_var
-    #     random_global_var += 1
-
-    # domath = Thread(target=function)
-    # domath.start()
-    # domath.join()
-    # print(random_global_var)
-
-    # result: 6
-
-
-
-
-                # # create dir
-                # path = os.path.join(os.getcwd(), f'{config.save_path}')
-                # print(f'cwd: {os.getcwd()}')
-                # print(f'path to save: {path}')
-
-                # if not os.path.exists(path):
-                #     os.mkdir(path)
-                #     print(f'directory {path} created')
-
-                # torch.save(self.model.state_dict(), os.path.join(config.save_path, f'{self.counter}.pth'))
-
-                # print('model saved at step {}'.format(i))
+                print('model saved at step {}'.format(i))
 
         self.done = True
 
@@ -443,6 +420,9 @@ class Learner:
         self.last_counter = self.counter
         self.loss = 0
         return self.done
+
+    def get_attr(self, attr):
+        return getattr(self, attr)
 
 
 # @ray.remote(num_cpus=1)

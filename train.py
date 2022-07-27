@@ -5,6 +5,7 @@ import time
 import torch
 import numpy as np
 import ray
+import worker
 from worker import GlobalBuffer, Learner, Actor, ModelSaver
 import config
 
@@ -22,8 +23,9 @@ def main(num_actors=config.num_actors, log_interval=config.log_interval):
     buffer = GlobalBuffer.remote()
     model_saver = ModelSaver.remote()
     learner = Learner.remote(buffer, model_saver)
+
     time.sleep(1)
-    actors = [Actor.remote(i, 0.4**(1+(i/(num_actors-1))*7), learner, buffer) for i in range(num_cpus)]
+    actors = [Actor.remote(i, 0.4**(1+(i/(num_actors-1))*7), learner, buffer) for i in range(num_actors)]
 
     print(f'testing actor input params')
     for i in range(num_actors):
@@ -39,6 +41,11 @@ def main(num_actors=config.num_actors, log_interval=config.log_interval):
 
     print('start training')
     buffer.run.remote()
+
+    # from threading import Thread
+    # learning_thread = Thread(target=learner._train.remote(), daemon=True)
+    # learning_thread.start()
+
     ray.get(learner.run.remote())
 
     done = False
@@ -46,18 +53,27 @@ def main(num_actors=config.num_actors, log_interval=config.log_interval):
         time.sleep(log_interval)
         done = ray.get(learner.stats.remote(log_interval))
         ray.get(buffer.stats.remote(log_interval))
+
+        # print(f'worker global state: {worker.global_state_dict}')
+
+        # data = ray.get(learner.get_attr.remote('temp_state_dict'))
+        # print(f'worker arg state: {data}')
+
+        # result = ray.get(learner.get_attr.remote('temp_state_dict'))
+        # print(f'learner.temp_state_dict: {result}')
+
         print()
 
 if __name__ == '__main__':
-    num_cpus = int(sys.argv[1])
-    # address = sys.argv[2]
-    print(f'train.py args: {sys.argv}')
+    # num_cpus = int(sys.argv[1])
+    # # address = sys.argv[2]
+    # print(f'train.py args: {sys.argv}')
 
-    config.num_actors = num_cpus
-    config.training_steps = round(2400000/config.num_actors)
-    # config.save_interval = round(config.training_steps * 0.05)
-    config.save_interval = 300
+    # config.num_actors = num_cpus
+    # config.training_steps = round(2400000/config.num_actors)
+    # # config.save_interval = round(config.training_steps * 0.05)
+    # config.save_interval = 300
 
-    print(f'updated save_interval: {config.save_interval}, training_steps: {config.training_steps}')
+    # print(f'updated save_interval: {config.save_interval}, training_steps: {config.training_steps}')
 
-    main(num_actors=config.num_actors-8)
+    main(num_actors=config.num_actors-3)
