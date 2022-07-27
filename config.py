@@ -19,7 +19,7 @@ action_dim = 5
 ############################################################
 
 # default infrastructure setting
-num_actors = 6
+num_actors = 16
 log_interval = 10
 # training_steps = 150000 # original
 training_steps = round(2400000/num_actors)
