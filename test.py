@@ -1,5 +1,7 @@
 '''create test set and test model'''
+from datetime import date
 import os
+from pickletools import optimize
 import sys
 import random
 import pickle
@@ -15,8 +17,8 @@ warnings.simplefilter("ignore", UserWarning)
 from tqdm import tqdm
 import numpy as np
 import torch
-# import torch.multiprocessing as mp
-import ray.util.multiprocessing as mp
+import torch.multiprocessing as mp
+# import ray.util.multiprocessing as mp
 from environment import Environment
 from model import Network
 import config
@@ -25,6 +27,7 @@ torch.manual_seed(config.test_seed)
 np.random.seed(config.test_seed)
 random.seed(config.test_seed)
 DEVICE = torch.device('cpu')
+# DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 torch.set_num_threads(1)
 
 
@@ -50,7 +53,102 @@ def create_test(test_env_settings: Tuple = config.test_env_settings, num_test_ca
         with open(name, 'wb') as f:
             pickle.dump(tests, f)
 
-@ray.remote
+def core_test_model(network, model_name, datetime, test_set, pool=None):
+    print(f'model name: {model_name}')
+    state_dict = torch.load(os.path.join(config.test_model_path, f'{datetime}/{model_name}.pth'),
+                        map_location=DEVICE)
+    network.load_state_dict(state_dict)
+    network.eval()
+    network.share_memory()
+
+    print(f'----------test model {model_name}----------')
+
+    should_skip = []
+
+    # write into file
+    filepath = f'results/{datetime}_output.csv'
+    output_file = Path(filepath)
+    output_file.parent.mkdir(exist_ok=True, parents=True)
+    with open(filepath, "w") as f:
+        writer = csv.writer(f)
+        writer.writerow(['map_size', 'num_agents', 'density', 'success_rate', 'avg_steps', 'commu_times'])
+
+    start_time = time.time()
+
+    for case in test_set:
+        map_size = case[0]
+        if map_size in should_skip:
+            print(f'test with map size: {case[0]} skipped')
+            continue
+
+        print(f"test set: {case[0]} length {case[1]} agents {case[2]} density")
+        with open(f'./test_set/{case[0]}length_{case[1]}agents_{case[2]}density.pth', 'rb') as f:
+            tests = pickle.load(f)
+
+        tests = [(test, network) for test in tests]
+
+        if pool is not None:
+            # using mp
+            ret = pool.map(test_one_case, tests)
+            success, steps, num_comm = zip(*ret)
+        else:
+            # without mp
+            success = np.zeros(len(tests))
+            steps = np.zeros(len(tests))
+            num_comm = np.zeros(len(tests))
+
+            for id, test in enumerate(tests):
+                su, st, comm = test_one_case(test)
+
+                success[id] = su
+                steps[id] = st
+                num_comm[id] = comm
+
+        success_rate = sum(success) / len(success) * 100
+        avg_steps = sum(steps) / len(steps)
+        commu_times = sum(num_comm) / len(num_comm)
+
+        with open(filepath, "a") as f:
+            writer = csv.writer(f)
+            writer.writerow([case[0], case[1], case[2], success_rate, avg_steps, commu_times])
+            # writer.writerow([f"test set: {case[0]} length {case[1]} agents {case[2]} density: ",
+            #     f'{success_rate}', f'{avg_steps}', f'{commu_times}'])
+
+        print("success rate: {:.2f}%".format(success_rate))
+        print(f"average step: {avg_steps}")
+        print(f"communication times: {commu_times}")
+
+        if avg_steps == 256 or success_rate == 0:
+            print(f'max steps reached, skipping other test cases with the same map size')
+
+            should_skip.append(map_size)
+            # test_set = remove_map(list(test_set), map_size)
+            continue
+
+        print()
+
+    print(f'time used for testing model {model_name}: \
+            {(time.time() - start_time)/60} mins')
+    print('')
+
+@ray.remote(num_cpus=2)
+def ray_test_model(model_range: Union[int, tuple], interval, datetime: str, test_set: Tuple = config.test_env_settings):
+    '''
+    test model in 'saved_models' folder
+    '''
+    network = Network()
+    network.eval()
+    network.to(DEVICE)
+
+    print('not using torch.mp')
+
+    print(f'testing model ranging from {model_range[0]} to {model_range[1]}')
+
+    for model_name in range(model_range[0], model_range[1] + 1, interval):
+        core_test_model(network=network, model_name=model_name, datetime=datetime, test_set=test_set)
+        print('\n')
+
+
 def test_model(model_range: Union[int, tuple], interval, datetime: str, test_set: Tuple = config.test_env_settings):
     '''
     test model in 'saved_models' folder
@@ -59,129 +157,15 @@ def test_model(model_range: Union[int, tuple], interval, datetime: str, test_set
     network.eval()
     network.to(DEVICE)
 
-    print(f'cpu available for testing: {mp.cpu_count()//2}')
     pool = mp.Pool(mp.cpu_count()//2) # don't run this in ICDC server
-    # pool = mp.Pool(config.num_actors)
-
-    print(f'testing network')
-
-    # if isinstance(model_range, str):
-    #     state_dict = torch.load(os.path.join(config.test_model_path, f'{datetime}/{model_range}.pth'),
-    #                             map_location=DEVICE)
-    #     network.load_state_dict(state_dict)
-    #     network.eval()
-    #     network.share_memory()
-
-    #     print(f'----------test model {model_range}----------')
-
-    #     should_skip = []
-
-    #     for case in test_set:
-    #         map_size = case[0]
-    #         if map_size in should_skip:
-    #             print(f'test with map size: {case[0]} skipped')
-    #             continue
-
-    #         print(f"test set: {case[0]} length {case[1]} agents {case[2]} density")
-    #         with open('./test_set/{}length_{}agents_{}density.pth'.format(case[0], case[1], case[2]), 'rb') as f:
-    #             tests = pickle.load(f)
-
-    #         tests = [(test, network) for test in tests]
-    #         ret = pool.map(test_one_case, tests)
-
-    #         success, steps, num_comm = zip(*ret)
-
-    #         if sum(steps) / len(steps) == 256:
-    #             print(f'max steps reached, skipping other test cases with the same map size')
-
-    #             should_skip.append(map_size)
-    #             # test_set = remove_map(list(test_set), map_size)
-    #             continue
-
-
-    #         success_rate = sum(success) / len(success) * 100
-    #         avg_steps = sum(steps) / len(steps)
-    #         commu_times = sum(num_comm) / len(num_comm)
-
-
-    #         print("success rate: {:.2f}%".format(success_rate)
-    #         print("average step: {}".format(avg_steps))
-    #         print("communication times: {}".format(commu_times))
-    #         print()
-
-    # elif isinstance(model_range, tuple):
+    print(f'number cpu used in pool: {mp.cpu_count()//2}')
+    print('using torch.mp')
 
     print(f'testing model ranging from {model_range[0]} to {model_range[1]}')
 
     for model_name in range(model_range[0], model_range[1] + 1, interval):
-        state_dict = torch.load(os.path.join(config.test_model_path, f'{datetime}/{model_name}.pth'),
-                            map_location=DEVICE)
-        network.load_state_dict(state_dict)
-        network.eval()
-        network.share_memory()
-
-        print(f'----------test model {model_name}----------')
-
-        should_skip = []
-
-        for case in test_set:
-            map_size = case[0]
-            if map_size in should_skip:
-                print(f'test with map size: {case[0]} skipped')
-                continue
-
-            print(f"test set: {case[0]} length {case[1]} agents {case[2]} density")
-            with open(f'./test_set/{case[0]}length_{case[1]}agents_{case[2]}density.pth', 'rb') as f:
-                tests = pickle.load(f)
-
-            tests = [(test, network) for test in tests]
-
-            # using mp
-            ret = pool.map(test_one_case, tests)
-            # ret = test_one_case.remote(tests)
-            success, steps, num_comm = zip(*ret)
-
-            # # without mp
-            # success = np.zeros(len(tests))
-            # steps = np.zeros(len(tests))
-            # num_comm = np.zeros(len(tests))
-            #
-            # for id, test in enumerate(tests):
-            #     su, st, comm = test_one_case(test)
-            #
-            #     success[id] = su
-            #     steps[id] = st
-            #     num_comm[id] = comm
-
-            success_rate = sum(success) / len(success) * 100
-            avg_steps = sum(steps) / len(steps)
-            commu_times = sum(num_comm) / len(num_comm)
-
-            # write into file
-            filepath = f'results/{datetime}_output.csv'
-            output_file = Path(filepath)
-            output_file.parent.mkdir(exist_ok=True, parents=True)
-
-            with open(filepath, "w") as f:
-                writer = csv.writer(f)
-                writer.writerow([f"test set: {case[0]} length {case[1]} agents {case[2]} density: ",
-                    f'{success_rate}', f'{avg_steps}', f'{commu_times}'])
-
-            print("success rate: {:.2f}%".format(success_rate))
-            print(f"average step: {avg_steps}")
-            print(f"communication times: {commu_times}")
-
-            if avg_steps == 256 or success_rate == 0:
-                print(f'max steps reached, skipping other test cases with the same map size')
-
-                should_skip.append(map_size)
-                # test_set = remove_map(list(test_set), map_size)
-                continue
-
-            print()
-
+        core_test_model(network=network, model_name=model_name, datetime=datetime, test_set=test_set, pool=pool)
         print('\n')
-
 
 def test_one_case(args):
     env_set, network = args
@@ -217,18 +201,6 @@ def code_test():
     network.step(torch.as_tensor(obs.astype(np.float32)).to(DEVICE),
                  torch.as_tensor(last_act.astype(np.float32)).to(DEVICE),
                  torch.as_tensor(pos.astype(np.int)))
-
-# # remove test case of the same map size if max steps reached at fewer agents number
-# def remove_map(array, size):
-#     if len(array) == 0:
-#         return []
-#
-#     element = array[0][0]
-#     if element == size:
-#         array.pop(0)
-#         remove_map(array, size)
-#     else:
-#         return array
 
 @ray.remote
 def foo(some_str):
@@ -276,65 +248,50 @@ class Foo(object):
         return getattr(self, attr)
 
 if __name__ == '__main__':
+    start_time = time.time()
+
     start_range = int(sys.argv[1])
     end_range = int(sys.argv[2])
+    interval = int(sys.argv[3])
+    # datetime = sys.argv[4]
+    datetime = '22-07-29_at_17.40.07' # do not use "", use ''
 
-    test_model.remote(model_range=(start_range, end_range), interval=7500, datetime='22-07-26_at_18.43.26')
+    print(f'testing spec')
+    print(f'start range: {start_range}, end range: {end_range}')
+    print(f'datetime: {datetime}')
 
-    # num_cpus = int(sys.argv[1])
-    # # address = sys.argv[2]
-    # print(f'test.py args: {sys.argv}')
+    # # test with ray
+    # print(f'testing model with ray')
+    # ray.init()
+    # # ray.get(foo.remote('testing ray remote func'))
+    # ray.get(ray_test_model.remote(model_range=(start_range, end_range), interval=interval, datetime='22-08-02_at_01.13.25'))
 
-    # config.num_actors = num_cpus
-    # config.training_steps = round(2400000/config.num_actors)
-    # config.save_interval = round(config.training_steps * 0.05)
+    # test without ray
+    print(f'testing model without ray')
+    test_model(model_range=(start_range, end_range), interval=interval, datetime=datetime)
 
-    # print(f'updated save_interval: {config.save_interval}, training_steps: {config.training_steps}')
+    # # other tests
+    # # create dir
+    # path = os.path.join(os.getcwd(), f'{config.save_path}')
+    # # print(f'cwd: {os.getcwd()0, path to save: {path}}')
 
-    # from datetime import datetime
-    # time = datetime.now().strftime("%y-%m-%d at %H.%M.%S")
-    # save_path = f'./saved_models/{time}'
-    # print(save_path)
+    # if not os.path.exists(path):
+    #     os.mkdir(path)
 
-    # # test mkdir
-    # cwd = os.getcwd()
-    # path = os.path.join(cwd, config.save_path)
-    # print(os.getcwd())
-    # print(path)
-    # os.mkdir(path) # windows
+    # model = Network()
+    # optimizer = torch.optim.Adam(model.parameters(), lr=2e-4)
+    # loss = 0.1
 
-    # testing ray
-    # foo.remote('test str')
-    # def threadfunc():
-    #     print('threadfunc')
-    # foo = Foo.remote()
-    # # value = ray.get(foo.get_attr.remote('value'))
-    # # print(f'value: {value}')
-    # ray.get(foo.run.remote())
+    # torch.save(model.state_dict(), os.path.join(f'{path}', f'{999}.pth'))
+    # torch.save({
+    #     'epoch': 999,
+    #     'model_state_dict': model.state_dict(),
+    #     'optimizer_state_dict': optimizer.state_dict(),
+    #     'loss': loss,
+    # }, os.path.join(f'{path}', f'{999}.pt'))
 
+    # print('model saved at step {}'.format(999))
 
-
-    # first trained model
-    # test_model.remote(model_range=(150000, 150001), datetime='22-07-05_at_18.09.42')
-
-    # obs radius = 4
-
-    # model trained with 2 actors
-    # test_model(model_range=(40000, 60000), datetime='22-07-21_at_17.42.12') # 667390
-    # test_model(model_range=(80000, 90000), datetime='22-07-21_at_17.42.12') # 667392
-    # test_model(model_range=(100000, 120000), datetime='22-07-21_at_17.42.12') # 667387
-    # test_model(model_range=(130000, 150000), datetime='22-07-21_at_17.42.12')
-
-    # model trained with 16 actors
-    # test_model(model_range=(120000, 120001), interval=7500, datetime='22-07-26_at_18.43.26')
-
-    # obs radius = 5
-    # test_model(model_range=(10000, 150000), datetime='22-07-23_at_13.16.32')
-
-    # ncpus = int(os.environ["SLURM_JOB_CPUS_PER_NODE"])
-    # # pool = mp.Pool(mp.cpu_count()//2) # don't run this in ICDC server
-    # print(f'using ncpu {ncpus} cpus')
-    # print(f'using mp {mp.cpu_count()} cpus')
-
+    print(f'time used for testing range ({start_range}-{end_range}): {(time.time() - start_time)/60}')
 
     print()
