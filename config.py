@@ -4,7 +4,7 @@ from datetime import datetime
 ####################    environment     ####################
 ############################################################
 
-obs_radius = 4
+obs_radius = 5
 reward_fn = dict(move=-0.075,
                 stay_on_goal=0,
                 stay_off_goal=-0.075,

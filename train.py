@@ -6,7 +6,7 @@ import torch
 import numpy as np
 import ray
 import worker
-from worker import GlobalBuffer, Learner, Actor, ModelSaver
+from worker import GlobalBuffer, Learner, Actor#, ModelSaver
 import config
 
 os.environ["OMP_NUM_THREADS"] = "1"
@@ -21,8 +21,8 @@ def main(num_actors=config.num_actors, log_interval=config.log_interval):
     # ray.init(address=os.environ["ip_head"])
 
     buffer = GlobalBuffer.remote()
-    model_saver = ModelSaver.remote()
-    learner = Learner.remote(buffer, model_saver)
+    # model_saver = ModelSaver.remote()
+    learner = Learner.remote(buffer)#, model_saver)
 
     time.sleep(1)
     actors = [Actor.remote(i, 0.4**(1+(i/(num_actors-1))*7), learner, buffer) for i in range(num_actors)]
@@ -76,4 +76,4 @@ if __name__ == '__main__':
 
     # print(f'updated save_interval: {config.save_interval}, training_steps: {config.training_steps}')
 
-    main(num_actors=config.num_actors-3)
+    main(num_actors=config.num_actors-5)

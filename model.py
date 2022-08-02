@@ -32,11 +32,19 @@ class CommLayer(nn.Module):
         # mask out out of FOV agent
         relative_pos[(relative_pos.abs() > config.obs_radius).any(3)] = 0
 
-        one_hot_position = torch.zeros((batch_size*num_agents*num_agents, 9*9), dtype=dtype, device=device)
+        fov_length = 2*config.obs_radius+1
+        one_hot_position = torch.zeros((batch_size*num_agents*num_agents, fov_length*fov_length), dtype=dtype, device=device)
+
         relative_pos += config.obs_radius
         relative_pos = relative_pos.reshape(batch_size*num_agents*num_agents, 2)
-        relative_pos_idx = relative_pos[:, 0] + relative_pos[:, 1]*9
 
+        # basically turning matrix into 1D array
+        relative_pos_idx = relative_pos[:, 0] + relative_pos[:, 1]*fov_length
+        # print(f'relative pos idx: {relative_pos_idx}')
+
+        # buggy
+        # when obs_radius is 1, relative_pos_idx is out of range
+        # IndexError: index 94 is out of bounds for dimension 1 with size 81
         one_hot_position[torch.arange(batch_size*num_agents*num_agents), relative_pos_idx.long()] = 1
         position_embedding = self.position_embeddings(one_hot_position)
 
@@ -70,7 +78,7 @@ class CommLayer(nn.Module):
         agg_message = (message_v * attn_weights).sum(1).view(batch_size, num_agents, self.num_heads*self.message_dim)
         agg_message = self.head_agg(agg_message)
 
-        # update hidden with request message 
+        # update hidden with request message
         input = input.view(-1, hidden_dim)
         agg_message = agg_message.view(batch_size*num_agents, self.num_heads*self.message_dim)
         updated_hidden = self.update(agg_message, input)
@@ -101,7 +109,7 @@ class CommBlock(nn.Module):
         relative_pos shape: batch_size x num_agents x num_agents x 2
         comm_mask shape: batch_size x num_agents x num_agents
         '''
-        
+
         batch_size, num_agents, latent_dim = latent.size()
 
         assert relative_pos.size() == (batch_size, num_agents, num_agents, 2), relative_pos.size()
@@ -230,7 +238,7 @@ class Network(nn.Module):
         actions = torch.argmax(q_val, 1).tolist()
 
         return actions, q_val.numpy(), self.hidden.squeeze(0).numpy(), relative_pos.numpy(), comm_mask.numpy()
-    
+
     def reset(self):
         self.hidden = None
 
