@@ -227,7 +227,14 @@ class GlobalBuffer:
         print()
 
         for num_agents in range(config.init_env_settings[0], config.max_num_agents+1):
+            # if first element does not exist, skip
+            if not (num_agents, config.init_env_settings[1]) in self.stat_dict:
+                break
+
+            # num agent
             print('{:2d}'.format(num_agents), end='')
+
+            # stat dict
             for map_len in range(config.init_env_settings[1], config.max_map_lenght+1, 5):
                 if (num_agents, map_len) in self.stat_dict:
                     print('{:4d}/{:<3d}'.format(sum(self.stat_dict[(num_agents, map_len)]), len(self.stat_dict[(num_agents, map_len)])), end='')
@@ -262,32 +269,32 @@ class GlobalBuffer:
         return self.env_settings_set
 
 
-@ray.remote(num_cpus=1)
-class ModelSaver:
-    def __init__(self):
-        self.state_dict = []
+# @ray.remote
+# class ModelSaver:
+#     def __init__(self):
+#         self.state_dict = []
 
-    def save_model(self, model, steps):
-        print('saving model!!')
+#     def save_model(self, model, steps):
+#         print('saving model!!')
 
-        # self.state_dict.append(model.state_dict())
+#         # self.state_dict.append(model.state_dict())
 
-        # # create dir
-        # path = os.path.join(os.getcwd(), f'{config.save_path}')
-        # print(f'cwd: {os.getcwd()}')
-        # print(f'path to save: {path}')
+#         # # create dir
+#         # path = os.path.join(os.getcwd(), f'{config.save_path}')
+#         # print(f'cwd: {os.getcwd()}')
+#         # print(f'path to save: {path}')
 
-        # if not os.path.exists(path):
-        #     os.mkdir(path)
-        #     print(f'directory {path} created')
+#         # if not os.path.exists(path):
+#         #     os.mkdir(path)
+#         #     print(f'directory {path} created')
 
-        # torch.save(model.state_dict(), os.path.join(config.save_path, f'{steps}.pth'))
+#         # torch.save(model.state_dict(), os.path.join(config.save_path, f'{steps}.pth'))
 
-        # print('model saved at step {}'.format(steps))
+#         # print('model saved at step {}'.format(steps))
 
-@ray.remote(num_gpus=2, num_cpus=1)
+@ray.remote(num_gpus=4, num_cpus=1)
 class Learner:
-    def __init__(self, buffer: GlobalBuffer, model_saver: ModelSaver):
+    def __init__(self, buffer: GlobalBuffer): #, model_saver: ModelSaver):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = Network()
         self.model.to(self.device)
@@ -300,11 +307,15 @@ class Learner:
         self.done = False
         self.loss = 0
 
+
+        # add previous steps num
+
+
         self.data_list = []
 
         self.store_weights()
 
-        self.model_saver = model_saver
+        # self.model_saver = model_saver
         self.temp_state_dict = None
 
         self.state_dict_step = 0
@@ -403,7 +414,12 @@ class Learner:
                     os.mkdir(path)
 
                 torch.save(self.model.state_dict(), os.path.join(f'{path}', f'{self.counter}.pth'))
-
+                torch.save({
+                    'training_steps': i,
+                    'model_state_dict': self.model.state_dict(),
+                    'optimizer_state_dict': self.optimizer.state_dict(),
+                    'loss': self.loss,
+                }, os.path.join(f'{path}', f'{self.counter}.pt'))
                 print('model saved at step {}'.format(i))
 
         self.done = True
