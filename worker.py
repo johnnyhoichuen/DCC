@@ -17,7 +17,7 @@ from environment import Environment
 from buffer import SumTree, LocalBuffer, EpisodeData
 import config
 
-@ray.remote(num_cpus=1)
+@ray.remote#(num_cpus=1)
 class GlobalBuffer:
     def __init__(self, buffer_capacity=config.buffer_capacity, init_env_settings=config.init_env_settings,
                 alpha=config.prioritized_replay_alpha, beta=config.prioritized_replay_beta, chunk_capacity=config.chunk_capacity):
@@ -227,6 +227,10 @@ class GlobalBuffer:
         print()
 
         for num_agents in range(config.init_env_settings[0], config.max_num_agents+1):
+            # if first element does not exist, skip
+            if not (num_agents, config.init_env_settings[1]) in self.stat_dict:
+                break
+
             print('{:2d}'.format(num_agents), end='')
             for map_len in range(config.init_env_settings[1], config.max_map_lenght+1, 5):
                 if (num_agents, map_len) in self.stat_dict:
@@ -262,32 +266,32 @@ class GlobalBuffer:
         return self.env_settings_set
 
 
-@ray.remote(num_cpus=1)
-class ModelSaver:
-    def __init__(self):
-        self.state_dict = []
+# @ray.remote(num_cpus=1)
+# class ModelSaver:
+#     def __init__(self):
+#         self.state_dict = []
+#
+#     def save_model(self, model, steps):
+#         print('saving model!!')
+#
+#         # self.state_dict.append(model.state_dict())
+#
+#         # # create dir
+#         # path = os.path.join(os.getcwd(), f'{config.save_path}')
+#         # print(f'cwd: {os.getcwd()}')
+#         # print(f'path to save: {path}')
+#
+#         # if not os.path.exists(path):
+#         #     os.mkdir(path)
+#         #     print(f'directory {path} created')
+#
+#         # torch.save(model.state_dict(), os.path.join(config.save_path, f'{steps}.pth'))
+#
+#         # print('model saved at step {}'.format(steps))
 
-    def save_model(self, model, steps):
-        print('saving model!!')
-
-        # self.state_dict.append(model.state_dict())
-
-        # # create dir
-        # path = os.path.join(os.getcwd(), f'{config.save_path}')
-        # print(f'cwd: {os.getcwd()}')
-        # print(f'path to save: {path}')
-
-        # if not os.path.exists(path):
-        #     os.mkdir(path)
-        #     print(f'directory {path} created')
-
-        # torch.save(model.state_dict(), os.path.join(config.save_path, f'{steps}.pth'))
-
-        # print('model saved at step {}'.format(steps))
-
-@ray.remote(num_gpus=2, num_cpus=1)
+@ray.remote(num_gpus=1, num_cpus=1)
 class Learner:
-    def __init__(self, buffer: GlobalBuffer, model_saver: ModelSaver):
+    def __init__(self, buffer: GlobalBuffer):#, model_saver: ModelSaver):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = Network()
         self.model.to(self.device)
@@ -304,7 +308,7 @@ class Learner:
 
         self.store_weights()
 
-        self.model_saver = model_saver
+        # self.model_saver = model_saver
         self.temp_state_dict = None
 
         self.state_dict_step = 0
@@ -440,7 +444,7 @@ class Learner:
 
 #     print('model saved at step {}'.format(steps))
 
-@ray.remote(num_cpus=1)
+@ray.remote#(num_cpus=1)
 class Actor:
     def __init__(self, worker_id: int, epsilon: float, learner: Learner, buffer: GlobalBuffer):
         self.id = worker_id
@@ -458,6 +462,12 @@ class Actor:
         obs, last_act, pos, local_buffer = self._reset() # came from env.observe()
 
         while True:
+
+            # print('inside Actor run func')
+            # print(f'obs.size: {obs.shape}') # [num_agents, 6 diff view (DHC), fov_length, fov_length]
+            # print(f'last_act: {last_act}') # [5], last 5 actions
+            # print(f'pos: {pos}') # [num_agents * 2]
+            # print()
 
             # sample action
             actions, q_val, hidden, relative_pos, comm_mask = self.model.step(torch.from_numpy(obs.astype(np.float32)),
@@ -493,6 +503,8 @@ class Actor:
             if self.counter == config.actor_update_steps:
                 self._update_weights()
                 self.counter = 0
+
+            # exit()
 
     def _update_weights(self):
         '''load weights from learner'''

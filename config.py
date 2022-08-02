@@ -4,7 +4,7 @@ from datetime import datetime
 ####################    environment     ####################
 ############################################################
 
-obs_radius = 4
+obs_radius = 5
 reward_fn = dict(move=-0.075,
                 stay_on_goal=0,
                 stay_off_goal=-0.075,
@@ -19,7 +19,7 @@ action_dim = 5
 ############################################################
 
 # default infrastructure setting
-num_actors = 16
+num_actors = 2
 log_interval = 10
 # training_steps = 150000 # original
 training_steps = round(2400000/num_actors)
@@ -29,7 +29,7 @@ print(f'save_interval: {save_interval}, training_steps: {training_steps}')
 # basic training setting
 gamma = 0.99
 batch_size = 128
-learning_starts = 50000
+learning_starts = 1000
 target_network_update_freq = 1750
 max_episode_length = 256
 buffer_capacity = 262144
@@ -57,7 +57,7 @@ prioritized_replay_beta=0.4
 # prioritized_replay_beta=1
 
 # curriculum learning
-init_env_settings = (1, 10)
+init_env_settings = (3, 10)
 max_num_agents = 16
 max_map_lenght = 40
 pass_rate = 0.9

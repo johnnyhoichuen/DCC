@@ -1,8 +1,8 @@
-from typing import Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp import autocast
+
 import config
 
 
@@ -28,17 +28,72 @@ class CommLayer(nn.Module):
 
     def position_embed(self, relative_pos, dtype, device):
 
+        print(f'inside CommLayer position_embed')
+
+        print(f'relative pos: {relative_pos}, size: {relative_pos.size()}')
+        """
+        (Actor pid=1117044) relative pos: tensor([[[[ 0,  0],
+        (Actor pid=1117044)           [ 2,  4]],
+        (Actor pid=1117044)          [[-2, -4],
+        (Actor pid=1117044)           [ 0,  0]]]]), size: torch.Size([1, 2, 2, 2])
+        """
+
         batch_size, num_agents, _, _ = relative_pos.size()
         # mask out out of FOV agent
         relative_pos[(relative_pos.abs() > config.obs_radius).any(3)] = 0
+        print(f'relative pos abs: {relative_pos.abs()}')
+        """
+        (Actor pid=1117044) relative pos abs: tensor([[[[0, 0],
+        (Actor pid=1117044)           [2, 4]],
+        (Actor pid=1117044)          [[2, 4],
+        (Actor pid=1117044)           [0, 0]]]])
+        """
 
-        one_hot_position = torch.zeros((batch_size*num_agents*num_agents, 9*9), dtype=dtype, device=device)
+        fov_length = 2 * config.obs_radius + 1
+        one_hot_position = torch.zeros((batch_size*num_agents*num_agents, fov_length*fov_length), dtype=dtype, device=device)
+        print(f'one hot pos shape: {one_hot_position.shape}')
+
         relative_pos += config.obs_radius
-        relative_pos = relative_pos.reshape(batch_size*num_agents*num_agents, 2)
-        relative_pos_idx = relative_pos[:, 0] + relative_pos[:, 1]*9
+        print(f'relative_pos += config.obs_radius: {relative_pos}')
+        print(f'relative pos size before reshape: {relative_pos.size()}')
+        """
+        (Actor pid=1117044) relative_pos += config.obs_radius: tensor([[[[5, 5],
+        (Actor pid=1117044)           [7, 9]],
+        (Actor pid=1117044)          [[3, 1],
+        (Actor pid=1117044)           [5, 5]]]])
+        """
 
+        relative_pos = relative_pos.reshape(batch_size*num_agents*num_agents, 2)
+        print(f'relative pos after reshape: {relative_pos}')
+        print(f'relative pos size after reshape: {relative_pos.size()}')
+        """
+        (Actor pid=1117044) relative pos after reshape: tensor([[5, 5],
+        (Actor pid=1117044)         [7, 9],
+        (Actor pid=1117044)         [3, 1],
+        (Actor pid=1117044)         [5, 5]])
+        """
+
+        relative_pos_idx = relative_pos[:, 0] + relative_pos[:, 1]*fov_length
+        print(f'relative_pos[:, 0]: {relative_pos[:, 0]}')
+        print(f'relative_pos[:, 1]*9: {relative_pos[:, 1]*fov_length}')
+        print(f'relative pos idx: {relative_pos_idx}')
+        """
+        (Actor pid=1117044) relative_pos[:, 0]: tensor([5, 7, 3, 5])
+        (Actor pid=1117044) relative_pos[:, 1]*9: tensor([45, 81,  9, 45])
+        (Actor pid=1117044) relative pos idx: tensor([50, 88, 12, 50])
+        """
+
+        print(f'one hot pos size: {one_hot_position.size()}')
+        print(f'one hot pos before modification: {one_hot_position}')
+        print(f'torch.arange(batch_size*num_agents*num_agents): {torch.arange(batch_size*num_agents*num_agents)}')
+        print(f'relative_pos_idx.long(): {relative_pos_idx.long()}')
         one_hot_position[torch.arange(batch_size*num_agents*num_agents), relative_pos_idx.long()] = 1
+        print(f'one hot pos after modification: {one_hot_position}')
+        print()
+
         position_embedding = self.position_embeddings(one_hot_position)
+
+        exit()
 
         return position_embedding
 
@@ -151,11 +206,18 @@ class Network(nn.Module):
     @torch.no_grad()
     def step(self, obs, last_act, pos):
         """
+        pos: [agent num, ]
         return actions, q_val.numpy(), self.hidden.squeeze(0).numpy(), relative_pos.numpy(), comm_mask.numpy()
         """
         num_agents = obs.size(0)
-        agent_indexing = torch.arange(num_agents)
+        agent_indexing = torch.arange(num_agents) # [1, 2, ..., num_agents]
         relative_pos = pos.unsqueeze(0)-pos.unsqueeze(1)
+        print(f'in network.step()')
+        print(f'pos.unsqueeze(0): {pos.unsqueeze(0)}, shape: {pos.unsqueeze(0).shape}')
+        print(f'pos.unsqueeze(1): {pos.unsqueeze(1)}, shape: {pos.unsqueeze(1).shape}')
+        print(f'relative pos: {relative_pos}')
+        print(f'relative pos size: {relative_pos.size()}') # [num_agent, num_agent, 2]
+        exit()
 
         in_obs_mask = (relative_pos.abs() <= config.obs_radius).all(2)
         in_obs_mask[agent_indexing, agent_indexing] = 0
