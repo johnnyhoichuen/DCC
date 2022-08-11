@@ -4,7 +4,7 @@ from datetime import datetime
 ####################    environment     ####################
 ############################################################
 
-obs_radius = 5
+obs_radius = 2
 reward_fn = dict(move=-0.075,
                 stay_on_goal=0,
                 stay_off_goal=-0.075,
@@ -22,8 +22,12 @@ action_dim = 5
 num_actors = 16
 log_interval = 10
 # training_steps = 150000 # original
-training_steps = round(2400000/num_actors)
-save_interval = round(training_steps * 0.05)
+if obs_radius == 2:
+    training_steps = 240000
+    save_interval = 15000
+else:
+    training_steps = round(2400000/num_actors)
+    save_interval = round(training_steps * 0.05)
 print(f'save_interval: {save_interval}, training_steps: {training_steps}')
 
 # basic training setting
@@ -38,6 +42,7 @@ burn_in_steps = 20
 
 time = datetime.now().strftime("%y-%m-%d_at_%H.%M.%S")
 save_path=f'saved_models/{time}'
+# test_model_path=f'./saved_models'
 test_model_path=f'./saved_models'
 
 actor_update_steps = 200
@@ -64,14 +69,18 @@ pass_rate = 0.9
 
 # dqn network setting
 cnn_channel = 128
-if obs_radius == 4:
+if obs_radius == 2:
+    hidden_dim = 256
+elif obs_radius == 3:
+    hidden_dim = 256
+elif obs_radius == 4:
     hidden_dim =  256 # when obs_radius=4
 elif obs_radius == 5:
     hidden_dim = 2304 # when obs_radius=5
 elif obs_radius == 6:
     hidden_dim = 20741 # or 20736 # when obs_radius=6
 else:
-    raise ValueError('obs_radius must be 4, 5 or 6')
+    raise ValueError('obs_radius must be 2-6')
 
 # same as DHC if set to false
 selective_comm = True
@@ -82,11 +91,15 @@ max_comm_agents = 3
 cl_history_size = 100
 
 test_seed = 0
-num_test_cases = 200
+num_test_cases = 100
 test_env_settings = (
+                    # 200 test cases
                     (40, 4, 0.3), (40, 8, 0.3), (40, 16, 0.3), (40, 32, 0.3),
                     # (40, 64, 0.3),
                     (80, 4, 0.3), (80, 8, 0.3), (80, 16, 0.3), (80, 32, 0.3),
                     # (80, 64, 0.3),
                     # (80, 128, 0.3),
+
+                    # 100 test cases
+                    # (120, 4, 0.3), (120, 8, 0.3), (120, 16, 0.3), (120, 32, 0.3), (120, 64, 0.3), (120, 128, 0.3),
                     ) # map length, number of agents, density
