@@ -2,6 +2,7 @@
 from datetime import date
 import os
 from pickletools import optimize
+from sched import scheduler
 import sys
 import random
 import pickle
@@ -26,8 +27,12 @@ import config
 torch.manual_seed(config.test_seed)
 np.random.seed(config.test_seed)
 random.seed(config.test_seed)
-DEVICE = torch.device('cpu')
+# DEVICE = torch.device('cpu')
+DEVICE = torch.device('cuda')
 # DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+print(f'DEVICE: {DEVICE}')
+
 torch.set_num_threads(1)
 
 
@@ -57,7 +62,13 @@ def core_test_model(network, model_name, datetime, test_set, pool=None):
     print(f'model name: {model_name}')
     state_dict = torch.load(os.path.join(config.test_model_path, f'{datetime}/{model_name}.pth'),
                         map_location=DEVICE)
+
+    # print("Model's state_dict:")
+    # for param_tensor in state_dict:
+    #     print(param_tensor, "\t", state_dict[param_tensor].size())
+
     network.load_state_dict(state_dict)
+    network.to(DEVICE)
     network.eval()
     network.share_memory()
 
@@ -69,9 +80,9 @@ def core_test_model(network, model_name, datetime, test_set, pool=None):
     filepath = f'results/{datetime}_output.csv'
     output_file = Path(filepath)
     output_file.parent.mkdir(exist_ok=True, parents=True)
-    with open(filepath, "w") as f:
+    with open(filepath, "a") as f:
         writer = csv.writer(f)
-        writer.writerow(['map_size', 'num_agents', 'density', 'success_rate', 'avg_steps', 'commu_times'])
+        writer.writerow(['training_steps', 'map_size', 'num_agents', 'density', 'success_rate', 'avg_steps', 'commu_times'])
 
     start_time = time.time()
 
@@ -110,7 +121,7 @@ def core_test_model(network, model_name, datetime, test_set, pool=None):
 
         with open(filepath, "a") as f:
             writer = csv.writer(f)
-            writer.writerow([case[0], case[1], case[2], success_rate, avg_steps, commu_times])
+            writer.writerow([model_name, case[0], case[1], case[2], success_rate, avg_steps, commu_times])
             # writer.writerow([f"test set: {case[0]} length {case[1]} agents {case[2]} density: ",
             #     f'{success_rate}', f'{avg_steps}', f'{commu_times}'])
 
@@ -131,7 +142,7 @@ def core_test_model(network, model_name, datetime, test_set, pool=None):
             {(time.time() - start_time)/60} mins')
     print('')
 
-@ray.remote(num_cpus=2)
+@ray.remote(num_gpus=2)
 def ray_test_model(model_range: Union[int, tuple], interval, datetime: str, test_set: Tuple = config.test_env_settings):
     '''
     test model in 'saved_models' folder
@@ -144,7 +155,7 @@ def ray_test_model(model_range: Union[int, tuple], interval, datetime: str, test
 
     print(f'testing model ranging from {model_range[0]} to {model_range[1]}')
 
-    for model_name in range(model_range[0], model_range[1] + 1, interval):
+    for model_name in range(model_range[1], model_range[0] - 1, -interval):
         core_test_model(network=network, model_name=model_name, datetime=datetime, test_set=test_set)
         print('\n')
 
@@ -180,27 +191,41 @@ def test_one_case(args):
     step = 0
     num_comm = 0
     while not done and env.steps < config.max_episode_length:
-        actions, _, _, _, comm_mask = network.step(torch.as_tensor(obs.astype(np.float32)).to(DEVICE),
-                                                   torch.as_tensor(last_act.astype(np.float32)).to(DEVICE),
-                                                   torch.as_tensor(pos.astype(np.int)))
+        obs_tensor = torch.as_tensor(obs.astype(np.float32)).to(DEVICE)
+        last_act_tensor = torch.as_tensor(last_act.astype(np.float32)).to(DEVICE)
+        pos_tensor = torch.as_tensor(pos.astype(np.int)).to(DEVICE)
+
+        actions, _, _, _, comm_mask = network.step(obs_tensor, last_act_tensor, pos_tensor)
         (obs, last_act, pos), _, done, _ = env.step(actions)
         step += 1
         num_comm += np.sum(comm_mask)
 
     return np.array_equal(env.agents_pos, env.goals_pos), step, num_comm
 
-
+@ray.remote(num_gpus=2)
 def code_test():
     env = Environment()
     network = Network()
     network.eval()
+    network.to(DEVICE)
     obs, last_act, pos = env.observe()
     # print(f'obs: {obs}')
     # print(f'last_act: {last_act}')
     # print(f'pos: {pos}')
-    network.step(torch.as_tensor(obs.astype(np.float32)).to(DEVICE),
-                 torch.as_tensor(last_act.astype(np.float32)).to(DEVICE),
-                 torch.as_tensor(pos.astype(np.int)))
+
+    obs_tensor = torch.as_tensor(obs.astype(np.float32)).to(DEVICE)
+    last_act_tensor = torch.as_tensor(last_act.astype(np.float32)).to(DEVICE)
+    pos_tensor = torch.as_tensor(pos.astype(np.int)).to(DEVICE)
+
+    print(f'obs device: {obs_tensor.get_device()}')
+    print(f'last act device: {last_act_tensor.get_device()}')
+    print(f'pos device: {pos_tensor.get_device()}')
+
+    # original
+    network.step(obs_tensor, last_act_tensor, torch.as_tensor(pos.astype(np.int)))
+
+    # adding pos to device
+    network.step(obs_tensor, last_act_tensor, pos_tensor)
 
 @ray.remote
 def foo(some_str):
@@ -253,22 +278,22 @@ if __name__ == '__main__':
     start_range = int(sys.argv[1])
     end_range = int(sys.argv[2])
     interval = int(sys.argv[3])
-    # datetime = sys.argv[4]
-    datetime = '22-07-29_at_17.40.07' # do not use "", use ''
+    datetime = sys.argv[4]
 
     print(f'testing spec')
     print(f'start range: {start_range}, end range: {end_range}')
     print(f'datetime: {datetime}')
 
     # # test with ray
-    # print(f'testing model with ray')
-    # ray.init()
-    # # ray.get(foo.remote('testing ray remote func'))
-    # ray.get(ray_test_model.remote(model_range=(start_range, end_range), interval=interval, datetime='22-08-02_at_01.13.25'))
+    print(f'testing model with ray')
+    ray.init()
+    # ray.get(foo.remote('testing ray remote func'))
+    # ray.get(code_test.remote())
+    ray.get(ray_test_model.remote(model_range=(start_range, end_range), interval=interval, datetime=datetime))
 
     # test without ray
-    print(f'testing model without ray')
-    test_model(model_range=(start_range, end_range), interval=interval, datetime=datetime)
+    # print(f'testing model without ray')
+    # test_model(model_range=(start_range, end_range), interval=interval, datetime=datetime)
 
     # # other tests
     # # create dir
@@ -295,3 +320,34 @@ if __name__ == '__main__':
     print(f'time used for testing range ({start_range}-{end_range}): {(time.time() - start_time)/60}')
 
     print()
+
+# if __name__ == "__main__":
+#     # # 1. create test case
+#     # create_test()
+
+#     # # 2. test if other params are saved
+#     # checkpoint = torch.load(os.path.join(config.test_model_path, f'22-08-04_at_18.13.20/100.pt'),
+#     #                     map_location='cuda')
+#     # # model.load_state_dict(checkpoint['model_state_dict'])
+#     # # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+#     # schedule = checkpoint['curriculum_stat_dict']
+#     # print(f'schedule: {schedule}')
+
+#     # 3.
+#     path = '22-08-08_at_23.37.56/135000.pt' # r2 normal
+#     checkpoint = torch.load(os.path.join(config.test_model_path, path),
+#                         map_location='cuda')
+#     curriculum = checkpoint['curriculum_stat_dict']
+
+#     # print the status of curriculum learning
+#     for num_agents in range(config.init_env_settings[0], config.max_num_agents+1):
+#         # num agent
+#         print('{:2d}'.format(num_agents), end='')
+
+#         # stat dict
+#         for map_len in range(config.init_env_settings[1], config.max_map_lenght+1, 5):
+#             if (num_agents, map_len) in curriculum:
+#                 print('{:4d}/{:<3d}'.format(sum(curriculum[(num_agents, map_len)]), len(curriculum[(num_agents, map_len)])), end='')
+#             else:
+#                 print('   N/A  ', end='')
+#         print()
