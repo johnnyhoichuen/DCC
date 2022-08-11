@@ -135,19 +135,43 @@ class Network(nn.Module):
         self.obs_shape = input_shape
         self.selective_comm = selective_comm
 
-        self.obs_encoder = nn.Sequential(
-            nn.Conv2d(input_shape[0], 64, 3, 1),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(64, 128, 3, 1),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(128, 192, 3, 1),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(192, 256, 3, 1),
-            nn.LeakyReLU(0.2, True),
-            nn.Flatten(),
-        )
+        if config.obs_radius == 2:
+            self.obs_encoder = nn.Sequential(
+                nn.Conv2d(input_shape[0], 128, 1, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Conv2d(128, 256, 3, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Conv2d(256, 256, 3, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Flatten(),
+            )
+        elif config.obs_radius == 3:
+            print(f'input_shape[0] when obs_radius=3: {input_shape[0]}')
 
-        self.recurrent = nn.GRUCell(self.latent_dim, self.hidden_dim)
+            self.obs_encoder = nn.Sequential(
+                nn.Conv2d(input_shape[0], 64, 3, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Conv2d(64, 128, 3, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Conv2d(128, 256, 3, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Flatten(),
+            )
+        else:
+            self.obs_encoder = nn.Sequential(
+                nn.Conv2d(input_shape[0], 64, 3, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Conv2d(64, 128, 3, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Conv2d(128, 192, 3, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Conv2d(192, 256, 3, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Flatten(),
+            )
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.recurrent = nn.GRUCell(self.latent_dim, self.hidden_dim).to(device)
         self.comm = CommBlock(self.hidden_dim)
 
         self.hidden = None
@@ -166,6 +190,14 @@ class Network(nn.Module):
         relative_pos = pos.unsqueeze(0)-pos.unsqueeze(1)
 
         in_obs_mask = (relative_pos.abs() <= config.obs_radius).all(2)
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        in_obs_mask = in_obs_mask.to(device)
+
+        # print(f'relativepos: {relative_pos.abs()}')
+        # print(f'(relative_pos.abs() <= config.obs_radius) type: {type((relative_pos.abs() <= config.obs_radius))}')
+        # print(f'in_obs_mask: {in_obs_mask},  device: {in_obs_mask.get_device()}')
+
         in_obs_mask[agent_indexing, agent_indexing] = 0
 
         if self.selective_comm:
@@ -190,7 +222,13 @@ class Network(nn.Module):
                 test_hidden = torch.repeat_interleave(self.hidden, num_in_obs_agents, dim=0)
 
             test_latent = self.obs_encoder(test_obs)
+            # print(f'test_latent: {test_latent.size()}')
+            # exit()
+
             test_latent = torch.cat((test_latent, test_last_act), dim=1)
+
+            test_latent = test_latent.to(device)
+            test_hidden = test_hidden.to(device)
 
             test_hidden = self.recurrent(test_latent, test_hidden)
             self.hidden = test_hidden[origin_agent_idx]
@@ -199,12 +237,16 @@ class Network(nn.Module):
             state_val = self.state(test_hidden)
             test_q_val = (state_val + adv_val - adv_val.mean(1, keepdim=True))
             test_actions = torch.argmax(test_q_val, 1)
+            test_actions = test_actions.to(device)
 
             actions_mat = torch.ones((num_agents, num_agents), dtype=test_actions.dtype) * -1
+            actions_mat = actions_mat.to(device)
+
             actions_mat[test_mask] = test_actions
             diff_action_mask = actions_mat != actions_mat[agent_indexing, agent_indexing].unsqueeze(1)
 
             assert (in_obs_mask[agent_indexing, agent_indexing] == 0).all()
+            diff_action_mask = diff_action_mask.to(device)
             comm_mask = torch.bitwise_and(in_obs_mask, diff_action_mask)
 
         else:
@@ -237,7 +279,7 @@ class Network(nn.Module):
 
         actions = torch.argmax(q_val, 1).tolist()
 
-        return actions, q_val.numpy(), self.hidden.squeeze(0).numpy(), relative_pos.numpy(), comm_mask.numpy()
+        return actions, q_val.cpu().numpy(), self.hidden.cpu().squeeze(0).numpy(), relative_pos.cpu().numpy(), comm_mask.cpu().numpy()
 
     def reset(self):
         self.hidden = None
