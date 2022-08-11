@@ -16,6 +16,7 @@ from model import Network
 from environment import Environment
 from buffer import SumTree, LocalBuffer, EpisodeData
 import config
+from datetime import datetime
 
 @ray.remote(num_cpus=1)
 class GlobalBuffer:
@@ -226,10 +227,11 @@ class GlobalBuffer:
             print('   {:2d}   '.format(i), end='')
         print()
 
+        # print the status of curriculum learning
         for num_agents in range(config.init_env_settings[0], config.max_num_agents+1):
-            # if first element does not exist, skip
-            if not (num_agents, config.init_env_settings[1]) in self.stat_dict:
-                break
+            # # if first element does not exist, skip
+            # if not (num_agents, config.init_env_settings[1]) in self.stat_dict:
+            #     break
 
             # num agent
             print('{:2d}'.format(num_agents), end='')
@@ -242,22 +244,33 @@ class GlobalBuffer:
                     print('   N/A  ', end='')
             print()
 
-        for key, val in self.stat_dict.copy().items():
+        for curriculum, dones in self.stat_dict.copy().items():
             # print('{}: {}/{}'.format(key, sum(val), len(val)))
-            if len(val) == config.cl_history_size and sum(val) >= config.cl_history_size*config.pass_rate:
+            if len(dones) == config.cl_history_size and sum(dones) >= config.cl_history_size*config.pass_rate:
+                num_agents, map_len = curriculum
+
                 # add number of agents
-                add_agent_key = (key[0]+1, key[1])
+
+                # if length < 20 and num agents > 5 => don't add num agents in small map
+
+
+
+                add_agent_key = (num_agents + 1, map_len)
                 if add_agent_key[0] <= config.max_num_agents and add_agent_key not in self.stat_dict:
                     self.stat_dict[add_agent_key] = []
 
-                if key[1] < config.max_map_lenght:
-                    add_map_key = (key[0], key[1]+5)
+                if curriculum[1] < config.max_map_lenght:
+                    # add map length
+                    add_map_key = (curriculum[0], curriculum[1]+5)
                     if add_map_key not in self.stat_dict:
                         self.stat_dict[add_map_key] = []
 
         self.env_settings_set = ray.put(list(self.stat_dict.keys()))
 
         self.counter = 0
+
+    def get_stat_dict(self):
+        return self.stat_dict
 
     def ready(self):
         if len(self) >= config.learning_starts:
@@ -418,9 +431,11 @@ class Learner:
                     'training_steps': i,
                     'model_state_dict': self.model.state_dict(),
                     'optimizer_state_dict': self.optimizer.state_dict(),
+                    'curriculum_stat_dict': ray.get(self.buffer.get_stat_dict.remote()),
                     'loss': self.loss,
                 }, os.path.join(f'{path}', f'{self.counter}.pt'))
                 print('model saved at step {}'.format(i))
+                print(f'saved at time: {datetime.now().strftime("%y-%m-%d_at_%H.%M.%S")}')
 
         self.done = True
 
