@@ -4,7 +4,7 @@ from datetime import datetime
 ####################    environment     ####################
 ############################################################
 
-obs_radius = 2
+obs_radius = 1
 reward_fn = dict(move=-0.075,
                 stay_on_goal=0,
                 stay_off_goal=-0.075,
@@ -69,7 +69,9 @@ pass_rate = 0.9
 
 # dqn network setting
 cnn_channel = 128
-if obs_radius == 2:
+if obs_radius == 1:
+    hidden_dim = 256
+elif obs_radius == 2:
     hidden_dim = 256
 elif obs_radius == 3:
     hidden_dim = 256
@@ -95,9 +97,9 @@ num_test_cases = 100
 test_env_settings = (
                     # 200 test cases
                     (40, 4, 0.3), (40, 8, 0.3), (40, 16, 0.3), (40, 32, 0.3),
-                    # (40, 64, 0.3),
+                    (40, 64, 0.3),
                     (80, 4, 0.3), (80, 8, 0.3), (80, 16, 0.3), (80, 32, 0.3),
-                    # (80, 64, 0.3),
+                    (80, 64, 0.3),
                     # (80, 128, 0.3),
 
                     # 100 test cases

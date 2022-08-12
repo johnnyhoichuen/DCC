@@ -135,7 +135,17 @@ class Network(nn.Module):
         self.obs_shape = input_shape
         self.selective_comm = selective_comm
 
-        if config.obs_radius == 2:
+        if config.obs_radius == 1:
+            self.obs_encoder = nn.Sequential(
+                nn.Conv2d(input_shape[0], 128, 1, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Conv2d(128, 128, 1, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Conv2d(128, 256, 3, 1),
+                nn.LeakyReLU(0.2, True),
+                nn.Flatten(),
+            )
+        elif config.obs_radius == 2:
             self.obs_encoder = nn.Sequential(
                 nn.Conv2d(input_shape[0], 128, 1, 1),
                 nn.LeakyReLU(0.2, True),

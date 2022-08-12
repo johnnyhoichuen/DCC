@@ -76,4 +76,6 @@ if __name__ == '__main__':
 
     # print(f'updated save_interval: {config.save_interval}, training_steps: {config.training_steps}')
 
+    print(f'datetime: {config.datetime}')
+
     main(num_actors=config.num_actors-5)
