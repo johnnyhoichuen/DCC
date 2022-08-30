@@ -4,7 +4,18 @@ from datetime import datetime
 ####################    environment     ####################
 ############################################################
 
-obs_radius = 1
+obs_radius = 3
+description = ""
+
+# settings for rapid testing
+batch_size = 1
+init_env_settings = (3, 10)
+num_actors = 1
+# # original settings
+# batch_size = 128
+# init_env_settings = (1, 10)
+# num_actors = 1
+
 reward_fn = dict(move=-0.075,
                 stay_on_goal=0,
                 stay_off_goal=-0.075,
@@ -19,7 +30,6 @@ action_dim = 5
 ############################################################
 
 # default infrastructure setting
-num_actors = 16
 log_interval = 10
 # training_steps = 150000 # original
 if obs_radius == 2:
@@ -32,7 +42,7 @@ print(f'save_interval: {save_interval}, training_steps: {training_steps}')
 
 # basic training setting
 gamma = 0.99
-batch_size = 128
+#batch_size = 128
 learning_starts = 50000
 target_network_update_freq = 1750
 max_episode_length = 256
@@ -62,7 +72,7 @@ prioritized_replay_beta=0.4
 # prioritized_replay_beta=1
 
 # curriculum learning
-init_env_settings = (1, 10)
+#init_env_settings = (2, 10)
 max_num_agents = 16
 max_map_lenght = 40
 pass_rate = 0.9
