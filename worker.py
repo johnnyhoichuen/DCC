@@ -20,7 +20,7 @@ from datetime import datetime
 
 @ray.remote(num_cpus=1)
 class GlobalBuffer:
-    def __init__(self, buffer_capacity=config.buffer_capacity, init_env_settings=config.init_env_settings,
+    def __init__(self, buffer_capacity=config.buffer_capacity, init_env_settings=config.init_env_settings, stat_dict=None,
                 alpha=config.prioritized_replay_alpha, beta=config.prioritized_replay_beta, chunk_capacity=config.chunk_capacity):
 
         self.capacity = buffer_capacity # 262144
@@ -35,9 +35,15 @@ class GlobalBuffer:
 
         self.counter = 0
         self.batched_data = []
-        self.stat_dict = {init_env_settings:[]}
+
+        if stat_dict:
+            self.stat_dict = stat_dict
+            self.env_settings_set = ray.put(list(stat_dict.keys()))
+        else:
+            self.stat_dict = {init_env_settings:[]}
+            self.env_settings_set = ray.put([init_env_settings])
+
         self.lock = threading.Lock()
-        self.env_settings_set = ray.put([init_env_settings])
 
         self.obs_buf = [None] * self.num_chunks
         self.last_act_buf = [None] * self.num_chunks
@@ -311,7 +317,7 @@ class Learner:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.model = Network()
         self.model.to(self.device)
-        self.tar_model = deepcopy(self.model)
+        self.target_model = deepcopy(self.model)
         self.optimizer = Adam(self.model.parameters(), lr=2e-4)
         self.scheduler = MultiStepLR(self.optimizer, milestones=[40000, 80000], gamma=0.5)
         self.buffer = buffer
@@ -320,24 +326,32 @@ class Learner:
         self.done = False
         self.loss = 0
 
-
-        # add previous steps num
-
-
         self.data_list = []
-
         self.store_weights()
-
-        # self.model_saver = model_saver
-        self.temp_state_dict = None
-
-        self.state_dict_step = 0
-        self.state_dict = 'fake original state dict'
-
-        # self.learning_thread = thread
 
         print("ray.get_gpu_ids(): {}".format(ray.get_gpu_ids()))
         print("CUDA_VISIBLE_DEVICES: {}".format(os.environ["CUDA_VISIBLE_DEVICES"]))
+
+    def update_from_last_model(self, checkpoint):
+        training_steps = checkpoint['training_steps']
+        model_state_dict = checkpoint['model_state_dict']
+        optimizer_state_dict = checkpoint['optimizer_state_dict']
+        loss = checkpoint['loss']
+
+        config.training_steps = training_steps
+        # TODO: test if the training steps is updated under ray settings
+
+        self.model.load_state_dict(model_state_dict)
+        self.optimizer.load_state_dict(optimizer_state_dict)
+        self.loss = loss
+
+        try:
+            scheduler_state_dict = checkpoint['scheduler_state_dict']
+            self.scheduler.load_state_dict(scheduler_state_dict)
+        except KeyError:
+            self.scheduler = MultiStepLR(self.optimizer, milestones=[40000, 80000], gamma=0.5)
+            print(f'\n\n\n\n\n\n  scheduler.state_dict is only available for models trained after since 2022-08-16 \n\n\n\n\n')
+
 
     def get_weights(self):
         return self.weights_id
@@ -377,7 +391,7 @@ class Learner:
             b_next_seq_len = b_seq_len + b_steps
 
             with torch.no_grad():
-                b_q_ = self.tar_model(b_obs, b_last_act, b_next_seq_len, b_hidden, b_relative_pos, b_comm_mask).max(1, keepdim=True)[0]
+                b_q_ = self.target_model(b_obs, b_last_act, b_next_seq_len, b_hidden, b_relative_pos, b_comm_mask).max(1, keepdim=True)[0]
 
             target_q = b_reward + b_gamma * b_q_
 
@@ -415,7 +429,7 @@ class Learner:
 
             # update target network, save model
             if i % config.target_network_update_freq == 0:
-                self.tar_model.load_state_dict(self.model.state_dict())
+                self.target_model.load_state_dict(self.model.state_dict())
 
             if i % config.save_interval == 0:
 
@@ -431,6 +445,7 @@ class Learner:
                     'training_steps': i,
                     'model_state_dict': self.model.state_dict(),
                     'optimizer_state_dict': self.optimizer.state_dict(),
+                    'scheduler_state_dict': self.scheduler.state_dict(),
                     'curriculum_stat_dict': ray.get(self.buffer.get_stat_dict.remote()),
                     'loss': self.loss,
                 }, os.path.join(f'{path}', f'{self.counter}.pt'))
@@ -477,7 +492,23 @@ class Actor:
         self.id = worker_id
         self.model = Network()
         self.model.eval()
-        self.env = Environment(curriculum=True)
+
+        # choose random env settings, in case we're retraining from ckpt
+        env_settings_id = ray.get(buffer.get_env_settings.remote())
+        env_settings = ray.get(env_settings_id)
+        print(f'env setting: {env_settings}')
+
+        rand = random.choice(env_settings)
+        num_agents = rand[0]
+        map_length = rand[1]
+        # print(f'env_settings: {env_settings}')
+        # print(f'num_agents: {self.num_agents}')
+        # print(f'map_length: {self.map_length}')
+
+        self.env = Environment(curriculum=True, init_env_settings_set=(num_agents, map_length))
+        # original
+        # self.env = Environment(curriculum=True)
+
         self.epsilon = epsilon
         self.learner = learner
         self.global_buffer = buffer
@@ -538,5 +569,15 @@ class Actor:
     def _reset(self):
         self.model.reset()
         obs, last_act, pos = self.env.reset()
+
+        import logging
+        time = datetime.now().strftime("%y-%m-%d_at_%H.%M.%S")
+        path = os.path.join(os.getcwd(), f'slurm/debug/selectivecomm/{time}')
+        logging.basicConfig(level=logging.INFO, filename=path)
+        logger = logging.getLogger('selectivecomm')
+
+        numpy_obs = torch.from_numpy(obs.astype(np.float32))
+        logger.info(f'obs in actor.reset(): \n{numpy_obs}')
+
         local_buffer = LocalBuffer(self.id, self.env.num_agents, self.env.map_size[0], obs)
         return obs, last_act, pos, local_buffer
