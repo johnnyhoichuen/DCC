@@ -195,69 +195,118 @@ class Network(nn.Module):
         """
         return actions, q_val.numpy(), self.hidden.squeeze(0).numpy(), relative_pos.numpy(), comm_mask.numpy()
         """
+
+        # for one time use
+        import logging
+        import os
+        from datetime import datetime
+        torch.set_printoptions(edgeitems=config.obs_radius+1)
+
+        time = datetime.now().strftime("%y-%m-%d_at_%H.%M.%S")
+        path = os.path.join(os.getcwd(), f'slurm/debug/selectivecomm/{time}')
+        logging.basicConfig(level=logging.INFO, filename=path)
+        logger = logging.getLogger('selectivecomm')
+
+        logger.info(f'printing obs in model: {obs.shape}\n{obs}')
+
         num_agents = obs.size(0)
         agent_indexing = torch.arange(num_agents)
         relative_pos = pos.unsqueeze(0)-pos.unsqueeze(1)
+        logger.info(f'relative_pos shape: {relative_pos.shape}')
+        logger.info(f'relative_pos: {relative_pos}')
 
         in_obs_mask = (relative_pos.abs() <= config.obs_radius).all(2)
+        logger.info(f'relative_pos.abs(): {relative_pos.abs()}')
+        logger.info(f'relative_pos.abs() <= config.obs_radius: {(relative_pos.abs() <= config.obs_radius)}')
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         in_obs_mask = in_obs_mask.to(device)
 
-        # print(f'relativepos: {relative_pos.abs()}')
-        # print(f'(relative_pos.abs() <= config.obs_radius) type: {type((relative_pos.abs() <= config.obs_radius))}')
-        # print(f'in_obs_mask: {in_obs_mask},  device: {in_obs_mask.get_device()}')
-
         in_obs_mask[agent_indexing, agent_indexing] = 0
+        logger.info(f'in_obs_mask or test_mask: {in_obs_mask}')
 
         if self.selective_comm:
             test_mask = in_obs_mask.clone()
             test_mask[agent_indexing, agent_indexing] = 1
+            logger.info(f'\ntest_mask[{agent_indexing}, {agent_indexing}]: {test_mask[agent_indexing, agent_indexing]}, agent_indexing: {agent_indexing}')
+
             num_in_obs_agents = test_mask.sum(1)
+            logger.info(f'num_in_obs_agents: {num_in_obs_agents}')
+
             origin_agent_idx = torch.zeros(num_agents, dtype=torch.long)
             for i in range(num_agents-1):
                 origin_agent_idx[i+1] = test_mask[i, i:].sum() + test_mask[i+1, :i+1].sum() + origin_agent_idx[i]
+
+            logger.info(f'origin_agent_idx: {origin_agent_idx}')
+
+            # get modified obs (test_obs)
+            # possible issue: num neighbours <<<< num agents => waste of memory (matrix size of num_agents*num_agents*...)
             test_obs = torch.repeat_interleave(obs, num_agents, dim=0).view(num_agents, num_agents, *config.obs_shape)[test_mask]
+            logger.info(f'test_obs.shape: {test_obs.shape}')
+            logger.info(f'test_obs: \n{test_obs}')
 
             test_relative_pos = relative_pos[test_mask]
+            logger.info(f'test_relative_pos: {test_relative_pos}')
             test_relative_pos += config.obs_radius
+            logger.info(f'test_relative_pos += config.obs_radius: {test_relative_pos}')
 
             test_obs[torch.arange(num_in_obs_agents.sum()), 0, test_relative_pos[:, 0], test_relative_pos[:, 1]] = 0
+            logger.info('\nrunning test_obs[torch.arange(num_in_obs_agents.sum()), 0, test_relative_pos[:, 0], test_relative_pos[:, 1]] = 0')
+            logger.info(f'torch.arange(num_in_obs_agents.sum()): {torch.arange(num_in_obs_agents.sum())}')
+            logger.info(f'test_relative_pos[:, 0]: {test_relative_pos[:, 0]}')
+            logger.info(f'test_relative_pos[:, 1]: {test_relative_pos[:, 1]}')
+            logger.info(f'test_obs:\n {test_obs}')
 
             # check the dim of test_* and self.recurrent input dim
             test_last_act = torch.repeat_interleave(last_act, num_in_obs_agents, dim=0)
+            logger.info(f'test_last_act: {test_last_act}')
+
             if self.hidden is None:
                 test_hidden = torch.zeros((num_in_obs_agents.sum(), self.hidden_dim))
+                logger.info(f'self.hidden is None, test_hidden: \n{test_hidden}')
             else:
                 test_hidden = torch.repeat_interleave(self.hidden, num_in_obs_agents, dim=0)
+                logger.info(f'self.hidden is not None, test_hidden: {test_hidden}')
 
             test_latent = self.obs_encoder(test_obs)
-            # print(f'test_latent: {test_latent.size()}')
-            # exit()
-
+            logger.info(f'test_latent: {test_latent.size()}')
             test_latent = torch.cat((test_latent, test_last_act), dim=1)
+            logger.info(f'test_latent after cat test_last_act: \n{test_latent}')
 
             test_latent = test_latent.to(device)
             test_hidden = test_hidden.to(device)
 
             test_hidden = self.recurrent(test_latent, test_hidden)
+            logger.info(f'test_hidden size: {test_hidden.size()}')
             self.hidden = test_hidden[origin_agent_idx]
+            logger.info(f'test_hidden[origin_agent_idx]: \n{test_hidden[origin_agent_idx]}')
 
+            # . feed obs features (hidden) into Q-network
             adv_val = self.adv(test_hidden)
             state_val = self.state(test_hidden)
             test_q_val = (state_val + adv_val - adv_val.mean(1, keepdim=True))
+            logger.info(f'test_q_val: {test_q_val}')
+
             test_actions = torch.argmax(test_q_val, 1)
             test_actions = test_actions.to(device)
+            logger.info(f'test_actions: {test_actions}')
 
             actions_mat = torch.ones((num_agents, num_agents), dtype=test_actions.dtype) * -1
             actions_mat = actions_mat.to(device)
+            logger.info(f'actions_mat: {actions_mat}')
 
             actions_mat[test_mask] = test_actions
+            logger.info(f'actions_mat[test_mask]: {actions_mat[test_mask]}')
             diff_action_mask = actions_mat != actions_mat[agent_indexing, agent_indexing].unsqueeze(1)
+            logger.info(f'diff_action_mask: {diff_action_mask}')
 
             assert (in_obs_mask[agent_indexing, agent_indexing] == 0).all()
             diff_action_mask = diff_action_mask.to(device)
             comm_mask = torch.bitwise_and(in_obs_mask, diff_action_mask)
+            logger.info(f'comm_mask: {comm_mask}')
+
+            logger.info('exiting')
+            exit()
 
         else:
 
