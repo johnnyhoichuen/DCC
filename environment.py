@@ -2,9 +2,10 @@ import random
 from typing import List, Union
 import numpy as np
 import config
+import logging
 
 ACTION_LIST = np.array([[-1, 0],[1, 0],[0, -1],[0, 1], [0, 0]], dtype=np.int)
-    
+
 class Environment:
     def __init__(self, num_agents: int = config.init_env_settings[0], map_length: int = config.init_env_settings[1],
                 obs_radius: int = config.obs_radius, reward_fn: dict = config.reward_fn, fix_density=None,
@@ -14,6 +15,8 @@ class Environment:
         if curriculum:
             self.env_set = [init_env_settings_set]
             self.num_agents = init_env_settings_set[0]
+
+            print(f'init_env_settings_set in Env class: {init_env_settings_set}')
             self.map_size = (init_env_settings_set[1], init_env_settings_set[1])
         else:
             self.num_agents = num_agents
@@ -28,18 +31,18 @@ class Environment:
             self.obstacle_density = fix_density
 
         self.map = np.random.choice(2, self.map_size, p=[1-self.obstacle_density, self.obstacle_density]).astype(np.int)
-        
+
         partition_list = self._map_partition()
 
         while len(partition_list) == 0:
             self.map = np.random.choice(2, self.map_size, p=[1-self.obstacle_density, self.obstacle_density]).astype(np.int)
             partition_list = self._map_partition()
-        
+
         self.agents_pos = np.empty((self.num_agents, 2), dtype=np.int)
         self.goals_pos = np.empty((self.num_agents, 2), dtype=np.int)
 
         pos_num = sum([len(partition) for partition in partition_list])
-        
+
         # loop to assign agent original position and goal position for each agent
         for i in range(self.num_agents):
 
@@ -50,7 +53,7 @@ class Environment:
                     pos_idx -= len(partition)
                     partition_idx += 1
                 else:
-                    break 
+                    break
 
             pos = random.choice(partition_list[partition_idx])
             partition_list[partition_idx].remove(pos)
@@ -71,13 +74,21 @@ class Environment:
 
         self.last_actions = np.zeros((self.num_agents, 5), dtype=np.bool)
 
-    
+
     def update_env_settings_set(self, new_env_settings_set):
         self.env_set = new_env_settings_set
 
     def reset(self, num_agents=None, map_length=None):
 
         if self.curriculum:
+
+
+
+            # randomly choosing env set!!!!
+            # TODO: could be something to improve here!!
+
+
+
             rand = random.choice(self.env_set)
             self.num_agents = rand[0]
             self.map_size = (rand[1], rand[1])
@@ -88,20 +99,28 @@ class Environment:
 
         if not self.fix_density:
             self.obstacle_density = np.random.triangular(0, 0.33, 0.5)
-        
+
         self.map = np.random.choice(2, self.map_size, p=[1-self.obstacle_density, self.obstacle_density]).astype(np.float32)
-        
+
+        import os
+        path = os.path.join(os.getcwd(), f'slurm/debug/selectivecomm/{config.time}')
+        logging.basicConfig(level=logging.INFO, filename=path)
+        logger = logging.getLogger('selectivecomm')
+        logger.info(f'map in env reset before partition: \n{self.map}')
+
         partition_list = self._map_partition()
 
         while len(partition_list) == 0:
             self.map = np.random.choice(2, self.map_size, p=[1-self.obstacle_density, self.obstacle_density]).astype(np.float32)
             partition_list = self._map_partition()
-        
+
+        logger.info(f'map in env reset after partition: \n{self.map}')
+
         self.agents_pos = np.empty((self.num_agents, 2), dtype=np.int)
         self.goals_pos = np.empty((self.num_agents, 2), dtype=np.int)
 
         pos_num = sum([len(partition) for partition in partition_list])
-        
+
         for i in range(self.num_agents):
 
             pos_idx = random.randint(0, pos_num-1)
@@ -111,7 +130,7 @@ class Environment:
                     pos_idx -= len(partition)
                     partition_idx += 1
                 else:
-                    break 
+                    break
 
             pos = random.choice(partition_list[partition_idx])
             partition_list[partition_idx].remove(pos)
@@ -139,7 +158,7 @@ class Environment:
 
         self.num_agents = agents_pos.shape[0]
         self.map_size = (self.map.shape[0], self.map.shape[1])
-        
+
         self.steps = 0
 
         self._get_heuri_map()
@@ -166,22 +185,22 @@ class Environment:
                 if up in empty_pos and dist_map[i, x-1, y] > dist+1:
                     dist_map[i, x-1, y] = dist+1
                     open_list.add(up)
-                
+
                 down = x+1, y
                 if down in empty_pos and dist_map[i, x+1, y] > dist+1:
                     dist_map[i, x+1, y] = dist+1
                     open_list.add(down)
-                
+
                 left = x, y-1
                 if left in empty_pos and dist_map[i, x, y-1] > dist+1:
                     dist_map[i, x, y-1] = dist+1
                     open_list.add(left)
-                
+
                 right = x, y+1
                 if right in empty_pos and dist_map[i, x, y+1] > dist+1:
                     dist_map[i, x, y+1] = dist+1
                     open_list.add(right)
-        
+
         self.heuri_map = np.zeros((self.num_agents, 4, *self.map_size), dtype=np.bool)
 
         for x, y in empty_pos:
@@ -189,21 +208,21 @@ class Environment:
 
                 if x > 0 and dist_map[i, x-1, y] < dist_map[i, x, y]:
                     self.heuri_map[i, 0, x, y] = 1
-                
+
                 if x < self.map_size[0]-1 and dist_map[i, x+1, y] < dist_map[i, x, y]:
                     self.heuri_map[i, 1, x, y] = 1
 
                 if y > 0 and dist_map[i, x, y-1] < dist_map[i, x, y]:
                     self.heuri_map[i, 2, x, y] = 1
-                
+
                 if y < self.map_size[1]-1 and dist_map[i, x, y+1] < dist_map[i, x, y]:
                     self.heuri_map[i, 3, x, y] = 1
 
         self.heuri_map = np.pad(self.heuri_map, ((0, 0), (0, 0), (self.obs_radius, self.obs_radius), (self.obs_radius, self.obs_radius)))
-    
+
     def _map_partition(self):
         '''
-        partitioning map into independent partitions 
+        partitioning map into independent partitions
         '''
         empty_list = np.argwhere(self.map==0).tolist()
 
@@ -228,17 +247,17 @@ class Environment:
                 if up in empty_pos:
                     empty_pos.remove(up)
                     open_list.append(up)
-                
+
                 down = x+1, y
                 if down in empty_pos:
                     empty_pos.remove(down)
                     open_list.append(down)
-                
+
                 left = x, y-1
                 if left in empty_pos:
                     empty_pos.remove(left)
                     open_list.append(left)
-                
+
                 right = x, y+1
                 if right in empty_pos:
                     empty_pos.remove(right)
@@ -336,7 +355,7 @@ class Environment:
                 collide_agent_id = np.where(np.all(next_pos==next_pos[agent_id], axis=1))[0].tolist()
                 if len(collide_agent_id) > 1:
                     # collide agent
-                    
+
                     # if all agents in collide agent are in checking list
                     all_in_checking = True
                     for id in collide_agent_id.copy():
@@ -391,10 +410,10 @@ class Environment:
         return observation and position for each agent
 
         obs: shape (num_agents, 6, 2*obs_radius+1, 2*obs_radius+1)
-            layer 1: agent map 
+            layer 1: agent map
             layer 2: obstacle map
             layer 3-6: heuristic map
-        
+
         last_act: agents' last step action
 
         pos: current position of each agent, used for caculating communication mask
