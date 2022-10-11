@@ -1,2 +1,4 @@
 __pycache__
 .vscode
+test_set/*
+saved_models/*

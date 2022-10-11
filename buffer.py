@@ -25,7 +25,7 @@ class EpisodeData:
 
 
 class SumTree:
-    '''used for prioritized experience replay''' 
+    '''used for prioritized experience replay'''
     def __init__(self, capacity: int):
         layer = 1
         while 2**(layer-1) < capacity:
@@ -113,7 +113,7 @@ class SumTree:
             idxes = (idxes-1) // 2
             idxes = np.unique(idxes)
             self.tree[idxes] = self.tree[2*idxes+1] + self.tree[2*idxes+2]
-        
+
         # check
         assert np.sum(self.tree[-self.capacity:])-self.tree[0] < 0.1, 'sum is {} but root is {}'.format(np.sum(self.tree[-self.capacity:]), self.tree[0])
 
@@ -121,9 +121,9 @@ class SumTree:
 class LocalBuffer:
     __slots__ = ('actor_id', 'map_len', 'num_agents', 'obs_buf', 'act_buf', 'rew_buf', 'hidden_buf', 'forward_steps',
                 'relative_pos_buf', 'q_buf', 'capacity', 'size', 'done', 'burn_in_steps', 'chunk_capacity', 'last_act_buf', 'comm_mask_buf')
-    def __init__(self, actor_id: int, num_agents: int, map_len: int, init_obs: np.ndarray, forward_steps=config.forward_steps,
+    def __init__(self, actor_id: int, num_agents: int, map_len: int, init_obs: np.ndarray, obs_shape, hidden_dim, forward_steps=config.forward_steps,
                 capacity: int = config.max_episode_length, burn_in_steps=config.burn_in_steps,
-                obs_shape=config.obs_shape, hidden_dim=config.hidden_dim, action_dim=config.action_dim):
+                action_dim=config.action_dim):
         """
         buffer for each episode
         """
@@ -149,7 +149,7 @@ class LocalBuffer:
         self.size = 0
 
         self.obs_buf[:burn_in_steps+1] = init_obs
-    
+
     def add(self, q_val, action: int, last_act, reward: float, next_obs, hidden, relative_pos, comm_mask):
         assert self.size < self.capacity
 
@@ -172,17 +172,17 @@ class LocalBuffer:
         if last_q_val is None:
             done = True
             cumulated_gamma.extend([0 for _ in range(forward_steps)])
-            
+
         else:
             done = False
             self.q_buf[self.size] = last_q_val
             self.relative_pos_buf[self.burn_in_steps+self.size] = last_relative_pos
             self.comm_mask_buf[self.burn_in_steps+self.size] = last_comm_mask
             cumulated_gamma.extend([config.gamma**i for i in reversed(range(1, forward_steps+1))])
-            
+
 
         num_chunks = math.ceil(self.size/config.chunk_capacity)
-        
+
         cumulated_gamma = np.array(cumulated_gamma, dtype=np.float16)
         self.obs_buf = self.obs_buf[:self.burn_in_steps+self.size+1]
         self.last_act_buf = self.last_act_buf[:self.burn_in_steps+self.size+1]
@@ -192,7 +192,7 @@ class LocalBuffer:
         self.relative_pos_buf = self.relative_pos_buf[:self.burn_in_steps+self.size+1]
         self.comm_mask_buf = self.comm_mask_buf[:self.burn_in_steps+self.size+1]
 
-        self.rew_buf = np.convolve(self.rew_buf, 
+        self.rew_buf = np.convolve(self.rew_buf,
                                 [config.gamma**(self.forward_steps-1-i) for i in range(self.forward_steps)],
                                 'valid').astype(np.float16)
 
