@@ -1,4 +1,10 @@
 __pycache__
 .vscode
-test_set/*
-saved_models/*
+/saved_models/
+/test_set/
+
+/slurm/debug/
+/slurm/deprecated/
+/slurm/testing/
+/slurm/training/
+/slurm/debug/selectivecomm/
