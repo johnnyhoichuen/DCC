@@ -7,8 +7,8 @@ import logging
 ACTION_LIST = np.array([[-1, 0],[1, 0],[0, -1],[0, 1], [0, 0]], dtype=np.int)
 
 class Environment:
-    def __init__(self, num_agents: int = config.init_env_settings[0], map_length: int = config.init_env_settings[1],
-                obs_radius: int = config.obs_radius, reward_fn: dict = config.reward_fn, fix_density=None,
+    def __init__(self, obs_radius: int, num_agents: int = config.init_env_settings[0], map_length: int = config.init_env_settings[1],
+                reward_fn: dict = config.reward_fn, fix_density=None,
                 curriculum=False, init_env_settings_set=config.init_env_settings):
 
         self.curriculum = curriculum

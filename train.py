@@ -17,7 +17,7 @@ np.random.seed(0)
 random.seed(0)
 
 
-def main(num_actors=config.num_actors, log_interval=config.log_interval, ckpt_path=None):
+def main(obs_radius, num_actors=config.num_actors, log_interval=config.log_interval, ckpt_path=None):
 
     ray.init()
     # ray.init(address=os.environ["ip_head"])
@@ -43,10 +43,10 @@ def main(num_actors=config.num_actors, log_interval=config.log_interval, ckpt_pa
 
     if num_actors == 1:
         # for testing
-        actor = Actor.remote(1, 0.4, learner, buffer)
+        actor = Actor.remote(1, 0.4, learner, buffer, obs_radius)
         actor.run.remote()
     else:
-        actors = [Actor.remote(i, 0.4**(1+(i/(num_actors-1))*7), learner, buffer) for i in range(num_actors)]
+        actors = [Actor.remote(i, 0.4**(1+(i/(num_actors-1))*7), learner, buffer, obs_radius) for i in range(num_actors)]
 
         print(f'testing actor input params')
         for i in range(num_actors):
@@ -87,12 +87,14 @@ def main(num_actors=config.num_actors, log_interval=config.log_interval, ckpt_pa
         print()
 
 if __name__ == '__main__':
-    # selective communication
-    path = os.path.join(os.getcwd(), f'slurm/debug/selectivecomm/{config.time}')
-    torch.set_printoptions(edgeitems=config.obs_radius+1)
+    obs_radius = int(sys.argv[1])
 
-    # logging setup
-    logging.basicConfig(level=logging.INFO, filename=path)
+    # selective communication
+    torch.set_printoptions(edgeitems=obs_radius+1)
+
+    # # logging setup
+    # path = os.path.join(os.getcwd(), f'slurm/debug/selectivecomm/{config.time}')
+    # logging.basicConfig(level=logging.INFO, filename=path)
 
     # num_cpus = int(sys.argv[1])
     # # address = sys.argv[2]
@@ -109,18 +111,18 @@ if __name__ == '__main__':
 
     try:
         # train from checkpoint
-        ckpt_path = sys.argv[1]
+        ckpt_path = sys.argv[2]
         if config.num_actors > 6:
-            main(num_actors=config.num_actors-5, ckpt_path=ckpt_path)
+            main(obs_radius=obs_radius, num_actors=config.num_actors-5, ckpt_path=ckpt_path)
         else:
-            main(num_actors=config.num_actors, ckpt_path=ckpt_path)
+            main(obs_radius=obs_radius, num_actors=config.num_actors, ckpt_path=ckpt_path)
     except IndexError:
         print('no checkpoint provided by SLURM script')
 
         # train from scratch
         if config.num_actors > 6:
-            main(num_actors=config.num_actors-5)
+            main(obs_radius=obs_radius, num_actors=config.num_actors-5)
         else:
-            main(num_actors=config.num_actors)
+            main(obs_radius=obs_radius, num_actors=config.num_actors)
 
     print(f'training end time: {datetime.now().strftime("%y-%m-%d_at_%H.%M.%S")}')

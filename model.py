@@ -4,19 +4,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp import autocast
 import config
+import logging
+import os
+import time
+from datetime import datetime
 
 
 class CommLayer(nn.Module):
-    def __init__(self, input_dim=config.hidden_dim, message_dim=32, pos_embed_dim=16, num_heads=4):
+    def __init__(self, obs_radius, input_dim, message_dim=32, pos_embed_dim=16, num_heads=4):
         super().__init__()
         self.input_dim = input_dim
         self.message_dim = message_dim
         self.pos_embed_dim = pos_embed_dim
         self.num_heads = num_heads
 
+        self.obs_radius = obs_radius
+
         self.norm = nn.LayerNorm(input_dim)
 
-        self.position_embeddings = nn.Linear((2*config.obs_radius+1)**2, pos_embed_dim)
+        self.position_embeddings = nn.Linear((2*self.obs_radius+1)**2, pos_embed_dim)
 
         self.message_key = nn.Linear(input_dim+pos_embed_dim, message_dim * num_heads)
         self.message_value = nn.Linear(input_dim+pos_embed_dim, message_dim * num_heads)
@@ -30,12 +36,12 @@ class CommLayer(nn.Module):
 
         batch_size, num_agents, _, _ = relative_pos.size()
         # mask out out of FOV agent
-        relative_pos[(relative_pos.abs() > config.obs_radius).any(3)] = 0
+        relative_pos[(relative_pos.abs() > self.obs_radius).any(3)] = 0
 
-        fov_length = 2*config.obs_radius+1
+        fov_length = 2*self.obs_radius+1
         one_hot_position = torch.zeros((batch_size*num_agents*num_agents, fov_length*fov_length), dtype=dtype, device=device)
 
-        relative_pos += config.obs_radius
+        relative_pos += self.obs_radius
         relative_pos = relative_pos.reshape(batch_size*num_agents*num_agents, 2)
 
         # basically turning matrix into 1D array
@@ -93,14 +99,14 @@ class CommLayer(nn.Module):
 
 
 class CommBlock(nn.Module):
-    def __init__(self, hidden_dim=config.hidden_dim, message_dim=128, pos_embed_dim=16):
+    def __init__(self, obs_radius, hidden_dim, message_dim=128, pos_embed_dim=16):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.message_dim = message_dim
         self.pos_embed_dim = pos_embed_dim
 
-        self.request_comm = CommLayer()
-        self.reply_comm = CommLayer()
+        self.request_comm = CommLayer(obs_radius=obs_radius, input_dim=hidden_dim)
+        self.reply_comm = CommLayer(obs_radius=obs_radius, input_dim=hidden_dim)
 
 
     def forward(self, latent, relative_pos, comm_mask):
@@ -127,17 +133,34 @@ class CommBlock(nn.Module):
         return hidden
 
 class Network(nn.Module):
-    def __init__(self, input_shape=config.obs_shape, selective_comm=config.selective_comm):
+    def __init__(self, obs_radius, selective_comm=config.selective_comm):
         super().__init__()
 
-        self.hidden_dim = config.hidden_dim
+        if obs_radius == 1:
+            self.hidden_dim = 256
+        elif obs_radius == 2:
+            self.hidden_dim = 256
+        elif obs_radius == 3:
+            self.hidden_dim = 256
+        elif obs_radius == 4:
+            self.hidden_dim =  256 # when obs_radius=4
+        elif obs_radius == 5:
+            self.hidden_dim = 2304 # when obs_radius=5
+        # elif obs_radius == 6:
+        #     self.hidden_dim = 20741 # or 20736 # when obs_radius=6
+        else:
+            raise ValueError('obs_radius must be 1-5')
+        # self.hidden_dim = config.hidden_dim
+
         self.latent_dim = self.hidden_dim + 5
-        self.obs_shape = input_shape
+        self.obs_radius = obs_radius
+        # self.obs_shape = input_shape
+        self.obs_shape = (6, 2*obs_radius+1, 2*obs_radius+1)
         self.selective_comm = selective_comm
 
-        if config.obs_radius == 1:
+        if self.obs_radius == 1:
             self.obs_encoder = nn.Sequential(
-                nn.Conv2d(input_shape[0], 128, 1, 1),
+                nn.Conv2d(self.obs_shape[0], 128, 1, 1),
                 nn.LeakyReLU(0.2, True),
                 nn.Conv2d(128, 128, 1, 1),
                 nn.LeakyReLU(0.2, True),
@@ -145,9 +168,9 @@ class Network(nn.Module):
                 nn.LeakyReLU(0.2, True),
                 nn.Flatten(),
             )
-        elif config.obs_radius == 2:
+        elif self.obs_radius == 2:
             self.obs_encoder = nn.Sequential(
-                nn.Conv2d(input_shape[0], 128, 1, 1),
+                nn.Conv2d(self.obs_shape[0], 128, 1, 1),
                 nn.LeakyReLU(0.2, True),
                 nn.Conv2d(128, 256, 3, 1),
                 nn.LeakyReLU(0.2, True),
@@ -155,11 +178,9 @@ class Network(nn.Module):
                 nn.LeakyReLU(0.2, True),
                 nn.Flatten(),
             )
-        elif config.obs_radius == 3:
-            print(f'input_shape[0] when obs_radius=3: {input_shape[0]}')
-
+        elif self.obs_radius == 3:
             self.obs_encoder = nn.Sequential(
-                nn.Conv2d(input_shape[0], 64, 3, 1),
+                nn.Conv2d(self.obs_shape[0], 64, 3, 1),
                 nn.LeakyReLU(0.2, True),
                 nn.Conv2d(64, 128, 3, 1),
                 nn.LeakyReLU(0.2, True),
@@ -169,7 +190,7 @@ class Network(nn.Module):
             )
         else:
             self.obs_encoder = nn.Sequential(
-                nn.Conv2d(input_shape[0], 64, 3, 1),
+                nn.Conv2d(self.obs_shape[0], 64, 3, 1),
                 nn.LeakyReLU(0.2, True),
                 nn.Conv2d(64, 128, 3, 1),
                 nn.LeakyReLU(0.2, True),
@@ -182,7 +203,7 @@ class Network(nn.Module):
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.recurrent = nn.GRUCell(self.latent_dim, self.hidden_dim).to(device)
-        self.comm = CommBlock(self.hidden_dim)
+        self.comm = CommBlock(obs_radius=obs_radius, hidden_dim=self.hidden_dim)
 
         self.hidden = None
 
@@ -190,123 +211,171 @@ class Network(nn.Module):
         self.adv = nn.Linear(self.hidden_dim, 5)
         self.state = nn.Linear(self.hidden_dim, 1)
 
+        # logging
+        file_time = datetime.now().strftime("%y-%m-%d_at_%H.%M.%S")
+        path = os.path.join(os.getcwd(), f'slurm/debug/selectivecomm/{file_time}')
+        logging.basicConfig(level=logging.WARNING, filename=path)
+        self.logger = logging.getLogger('selectivecomm')
+
+        self.before_select_comm_time = 0
+        self.select_comm_time = 0
+        self.after_select_comm_time = 0
+
     @torch.no_grad()
     def step(self, obs, last_act, pos):
         """
         return actions, q_val.numpy(), self.hidden.squeeze(0).numpy(), relative_pos.numpy(), comm_mask.numpy()
         """
 
-        # for one time use
-        import logging
-        import os
-        from datetime import datetime
-        torch.set_printoptions(edgeitems=config.obs_radius+1)
+        # # for one time use
+        # import logging
+        # import os
+        # from datetime import datetime
+        # torch.set_printoptions(edgeitems=self.obs_radius+1)
 
-        time = datetime.now().strftime("%y-%m-%d_at_%H.%M.%S")
-        path = os.path.join(os.getcwd(), f'slurm/debug/selectivecomm/{time}')
-        logging.basicConfig(level=logging.INFO, filename=path)
-        logger = logging.getLogger('selectivecomm')
+        before_select_comm_computation_time = time.time()
 
-        logger.info(f'printing obs in model: {obs.shape}\n{obs}')
+        self.logger.info(f'printing obs in model: {obs.shape}\n{obs}')
+
+        # _time = time.time()
+        # print(f': {time.time() - _time}')
+
+        # relative_pos_time = time.time()
 
         num_agents = obs.size(0)
         agent_indexing = torch.arange(num_agents)
         relative_pos = pos.unsqueeze(0)-pos.unsqueeze(1)
-        logger.info(f'relative_pos shape: {relative_pos.shape}')
-        logger.info(f'relative_pos: {relative_pos}')
+        # self.logger.info(f'relative_pos shape: {relative_pos.shape}')
+        # self.logger.info(f'relative_pos: {relative_pos}')
 
-        in_obs_mask = (relative_pos.abs() <= config.obs_radius).all(2)
-        logger.info(f'relative_pos.abs(): {relative_pos.abs()}')
-        logger.info(f'relative_pos.abs() <= config.obs_radius: {(relative_pos.abs() <= config.obs_radius)}')
+        # print(f': {time.time() - relative_pos_time}')
+
+        creating_obs_mask_time = time.time()
+
+        in_obs_mask = (relative_pos.abs() <= self.obs_radius).all(2)
+        # self.logger.info(f'relative_pos.abs(): {relative_pos.abs()}')
+        ## self.logger.info(f'relative_pos.abs() <= self.obs_radius: {(relative_pos.abs() <= self.obs_radius)}')
+        # self.logger.info(f'in_obs_mask = (relative_pos.abs() <= self.obs_radius).all(2): \n{in_obs_mask}')
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         in_obs_mask = in_obs_mask.to(device)
 
+        # value on diagonal = 0 (removing the indication of agent i exist in fov of agent i)
         in_obs_mask[agent_indexing, agent_indexing] = 0
-        logger.info(f'in_obs_mask or test_mask: {in_obs_mask}')
+        # self.logger.info(f'in_obs_mask or test_mask: {in_obs_mask}')
+
+        # print(f': {time.time() - creating_obs_mask_time}')
+        # print(f'before_select_comm_computation_time: {time.time() - before_select_comm_computation_time}')
+        self.before_select_comm_time += time.time() - before_select_comm_computation_time
 
         if self.selective_comm:
+            select_comm_computation_time = time.time()
+
+            # num_possible_comm = torch.zeros(num_agents, dtype=torch.long)
+            # num_actual_comm = torch.zeros(num_agents, dtype=torch.long)
+
+            # count number of true for each row
+            # num_possible_comm = torch.count_nonzero(in_obs_mask)
+
             test_mask = in_obs_mask.clone()
             test_mask[agent_indexing, agent_indexing] = 1
-            logger.info(f'\ntest_mask[{agent_indexing}, {agent_indexing}]: {test_mask[agent_indexing, agent_indexing]}, agent_indexing: {agent_indexing}')
+            # self.logger.info(f'\ntest_mask[{agent_indexing}, {agent_indexing}]: {test_mask[agent_indexing, agent_indexing]}, agent_indexing: {agent_indexing}')
+            self.logger.info(f'\ntest_mask: {test_mask}')
 
             num_in_obs_agents = test_mask.sum(1)
-            logger.info(f'num_in_obs_agents: {num_in_obs_agents}')
+            # self.logger.info(f'num_in_obs_agents: {num_in_obs_agents}')
 
             origin_agent_idx = torch.zeros(num_agents, dtype=torch.long)
             for i in range(num_agents-1):
                 origin_agent_idx[i+1] = test_mask[i, i:].sum() + test_mask[i+1, :i+1].sum() + origin_agent_idx[i]
 
-            logger.info(f'origin_agent_idx: {origin_agent_idx}')
+            # self.logger.info(f'origin_agent_idx: {origin_agent_idx}')
 
             # get modified obs (test_obs)
             # possible issue: num neighbours <<<< num agents => waste of memory (matrix size of num_agents*num_agents*...)
-            test_obs = torch.repeat_interleave(obs, num_agents, dim=0).view(num_agents, num_agents, *config.obs_shape)[test_mask]
-            logger.info(f'test_obs.shape: {test_obs.shape}')
-            logger.info(f'test_obs: \n{test_obs}')
+            test_obs = torch.repeat_interleave(obs, num_agents, dim=0).view(num_agents, num_agents, *self.obs_shape)[test_mask]
+            # self.logger.info(f'test_obs.shape: {test_obs.shape}')
+            # self.logger.info(f'test_obs: \n{test_obs}')
 
             test_relative_pos = relative_pos[test_mask]
-            logger.info(f'test_relative_pos: {test_relative_pos}')
-            test_relative_pos += config.obs_radius
-            logger.info(f'test_relative_pos += config.obs_radius: {test_relative_pos}')
+            # self.logger.info(f'test_relative_pos: {test_relative_pos}')
+            test_relative_pos += self.obs_radius
+            # self.logger.info(f'test_relative_pos += self.obs_radius: {test_relative_pos}')
 
             test_obs[torch.arange(num_in_obs_agents.sum()), 0, test_relative_pos[:, 0], test_relative_pos[:, 1]] = 0
-            logger.info('\nrunning test_obs[torch.arange(num_in_obs_agents.sum()), 0, test_relative_pos[:, 0], test_relative_pos[:, 1]] = 0')
-            logger.info(f'torch.arange(num_in_obs_agents.sum()): {torch.arange(num_in_obs_agents.sum())}')
-            logger.info(f'test_relative_pos[:, 0]: {test_relative_pos[:, 0]}')
-            logger.info(f'test_relative_pos[:, 1]: {test_relative_pos[:, 1]}')
-            logger.info(f'test_obs:\n {test_obs}')
+            # self.logger.info('\nrunning test_obs[torch.arange(num_in_obs_agents.sum()), 0, test_relative_pos[:, 0], test_relative_pos[:, 1]] = 0')
+            # self.logger.info(f'torch.arange(num_in_obs_agents.sum()): {torch.arange(num_in_obs_agents.sum())}')
+            # self.logger.info(f'test_relative_pos[:, 0]: {test_relative_pos[:, 0]}')
+            # self.logger.info(f'test_relative_pos[:, 1]: {test_relative_pos[:, 1]}')
+            # self.logger.info(f'test_obs:\n {test_obs}')
 
             # check the dim of test_* and self.recurrent input dim
             test_last_act = torch.repeat_interleave(last_act, num_in_obs_agents, dim=0)
-            logger.info(f'test_last_act: {test_last_act}')
+            # self.logger.info(f'test_last_act: {test_last_act}')
 
             if self.hidden is None:
                 test_hidden = torch.zeros((num_in_obs_agents.sum(), self.hidden_dim))
-                logger.info(f'self.hidden is None, test_hidden: \n{test_hidden}')
+                # self.logger.info(f'self.hidden is None, test_hidden: \n{test_hidden}')
             else:
                 test_hidden = torch.repeat_interleave(self.hidden, num_in_obs_agents, dim=0)
-                logger.info(f'self.hidden is not None, test_hidden: {test_hidden}')
+                # self.logger.info(f'self.hidden is not None, test_hidden: {test_hidden}')
 
             test_latent = self.obs_encoder(test_obs)
-            logger.info(f'test_latent: {test_latent.size()}')
+            # self.logger.info(f'test_latent: {test_latent.size()}')
             test_latent = torch.cat((test_latent, test_last_act), dim=1)
-            logger.info(f'test_latent after cat test_last_act: \n{test_latent}')
+            # self.logger.info(f'test_latent after cat test_last_act: \n{test_latent}')
 
             test_latent = test_latent.to(device)
             test_hidden = test_hidden.to(device)
 
             test_hidden = self.recurrent(test_latent, test_hidden)
-            logger.info(f'test_hidden size: {test_hidden.size()}')
+            # self.logger.info(f'test_hidden size: {test_hidden.size()}')
             self.hidden = test_hidden[origin_agent_idx]
-            logger.info(f'test_hidden[origin_agent_idx]: \n{test_hidden[origin_agent_idx]}')
+            # self.logger.info(f'test_hidden[origin_agent_idx]: \n{test_hidden[origin_agent_idx]}')
 
             # . feed obs features (hidden) into Q-network
             adv_val = self.adv(test_hidden)
             state_val = self.state(test_hidden)
             test_q_val = (state_val + adv_val - adv_val.mean(1, keepdim=True))
-            logger.info(f'test_q_val: {test_q_val}')
+            # self.logger.info(f'test_q_val: {test_q_val}')
 
             test_actions = torch.argmax(test_q_val, 1)
             test_actions = test_actions.to(device)
-            logger.info(f'test_actions: {test_actions}')
+            self.logger.info(f'test_actions: {test_actions}')
 
             actions_mat = torch.ones((num_agents, num_agents), dtype=test_actions.dtype) * -1
             actions_mat = actions_mat.to(device)
-            logger.info(f'actions_mat: {actions_mat}')
+            self.logger.info(f'actions_mat: {actions_mat}')
 
             actions_mat[test_mask] = test_actions
-            logger.info(f'actions_mat[test_mask]: {actions_mat[test_mask]}')
+            self.logger.info(f'actions_mat[test_mask]: {actions_mat[test_mask]}')
             diff_action_mask = actions_mat != actions_mat[agent_indexing, agent_indexing].unsqueeze(1)
-            logger.info(f'diff_action_mask: {diff_action_mask}')
+            self.logger.info(f'diff_action_mask: {diff_action_mask}')
 
             assert (in_obs_mask[agent_indexing, agent_indexing] == 0).all()
             diff_action_mask = diff_action_mask.to(device)
             comm_mask = torch.bitwise_and(in_obs_mask, diff_action_mask)
-            logger.info(f'comm_mask: {comm_mask}')
+            self.logger.info(f'comm_mask: {comm_mask}')
 
-            logger.info('exiting')
-            exit()
+            # # TODO: calculate no. of communications
+            # num_actual_comm = torch.count_nonzero(comm_mask)
+            #
+            # self.logger.warning(f'num possible comm: {num_possible_comm}')
+            # self.logger.warning(f'num actual comm: {num_actual_comm}')
+            #
+            # if num_possible_comm == 0:
+            #     ratio = 0
+            #     # self.logger.warning(f'ECR = 0')
+            # else:
+            #     ratio = num_actual_comm.float()/num_possible_comm.float()
+            #     # self.logger.warning(f'ECR (int): {num_actual_comm / num_possible_comm}')
+            #     # self.logger.warning(f'ECR: {ratio}')
+            #
+            # # self.logger.info('exiting')
+            # # exit()
+
+            # print(f'select_comm_time: {time.time() - select_comm_time}')
+            self.select_comm_time += time.time() - select_comm_computation_time
 
         else:
 
@@ -326,6 +395,8 @@ class Network(nn.Module):
             else:
                 self.hidden = self.recurrent(latent, self.hidden)
 
+        after_select_comm_computation_time = time.time()
+
         assert (comm_mask[agent_indexing, agent_indexing] == 0).all()
 
         self.hidden = self.comm(self.hidden.unsqueeze(0), relative_pos.unsqueeze(0), comm_mask.unsqueeze(0))
@@ -338,10 +409,22 @@ class Network(nn.Module):
 
         actions = torch.argmax(q_val, 1).tolist()
 
-        return actions, q_val.cpu().numpy(), self.hidden.cpu().squeeze(0).numpy(), relative_pos.cpu().numpy(), comm_mask.cpu().numpy()
+        q_val = q_val.cpu().numpy()
+        hidden = self.hidden.cpu().squeeze(0).numpy()
+        relative_pos = relative_pos.cpu().numpy()
+        comm_mask = comm_mask.cpu().numpy()
+        in_obs_mask = in_obs_mask.cpu().numpy()
+
+        # print(f'after_select_comm_computation_time: {time.time() - after_select_comm_computation_time}')
+        self.after_select_comm_time += time.time() - after_select_comm_computation_time
+
+        return actions, q_val, hidden, relative_pos, comm_mask, in_obs_mask
 
     def reset(self):
         self.hidden = None
+        self.before_select_comm_time = 0
+        self.select_comm_time = 0
+        self.after_select_comm_time = 0
 
     @autocast() # allow mixed precision
     def forward(self, obs, last_act, steps, hidden, relative_pos, comm_mask):

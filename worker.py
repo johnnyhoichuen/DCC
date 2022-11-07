@@ -488,10 +488,12 @@ class Learner:
 
 @ray.remote(num_cpus=1)
 class Actor:
-    def __init__(self, worker_id: int, epsilon: float, learner: Learner, buffer: GlobalBuffer):
+    def __init__(self, worker_id: int, epsilon: float, learner: Learner, buffer: GlobalBuffer, obs_radius):
         self.id = worker_id
         self.model = Network()
         self.model.eval()
+
+        self.obs_radius = obs_radius
 
         # choose random env settings, in case we're retraining from ckpt
         env_settings_id = ray.get(buffer.get_env_settings.remote())
@@ -505,7 +507,7 @@ class Actor:
         # print(f'num_agents: {self.num_agents}')
         # print(f'map_length: {self.map_length}')
 
-        self.env = Environment(curriculum=True, init_env_settings_set=(num_agents, map_length))
+        self.env = Environment(obs_radius=obs_radius, curriculum=True, init_env_settings_set=(num_agents, map_length))
         # original
         # self.env = Environment(curriculum=True)
 
@@ -522,7 +524,7 @@ class Actor:
         while True:
 
             # sample action
-            actions, q_val, hidden, relative_pos, comm_mask = self.model.step(torch.from_numpy(obs.astype(np.float32)),
+            actions, q_val, hidden, relative_pos, comm_mask, _ = self.model.step(torch.from_numpy(obs.astype(np.float32)),
                                                                             torch.from_numpy(last_act.astype(np.float32)),
                                                                             torch.from_numpy(pos.astype(np.int)))
 
@@ -542,7 +544,7 @@ class Actor:
                 if done:
                     data = local_buffer.finish()
                 else:
-                    _, q_val, _, relative_pos, comm_mask = self.model.step(torch.from_numpy(next_obs.astype(np.float32)),
+                    _, q_val, _, relative_pos, comm_mask, _ = self.model.step(torch.from_numpy(next_obs.astype(np.float32)),
                                                                             torch.from_numpy(last_act.astype(np.float32)),
                                                                             torch.from_numpy(next_pos.astype(np.int)))
                     data = local_buffer.finish(q_val[0], relative_pos, comm_mask)
@@ -579,5 +581,19 @@ class Actor:
         numpy_obs = torch.from_numpy(obs.astype(np.float32))
         logger.info(f'obs in actor.reset(): \n{numpy_obs}')
 
-        local_buffer = LocalBuffer(self.id, self.env.num_agents, self.env.map_size[0], obs)
+        obs_shape = (6, 2*self.obs_radius+1, 2*self.obs_radius+1)
+        if self.obs_radius == 1:
+            hidden_dim = 256
+        elif self.obs_radius == 2:
+            hidden_dim = 256
+        elif self.obs_radius == 3:
+            hidden_dim = 256
+        elif self.obs_radius == 4:
+            hidden_dim =  256 # when obs_radius=4
+        elif self.obs_radius == 5:
+            hidden_dim = 2304 # when obs_radius=5
+        else:
+            raise ValueError('obs_radius must be 1-5')
+
+        local_buffer = LocalBuffer(self.id, self.env.num_agents, self.env.map_size[0], obs, obs_shape=obs_shape, hidden_dim=hidden_dim)
         return obs, last_act, pos, local_buffer

@@ -36,19 +36,19 @@ print(f'DEVICE: {DEVICE}')
 torch.set_num_threads(1)
 
 
-def create_test(test_env_settings: Tuple = config.test_env_settings, num_test_cases: int = config.num_test_cases):
+def create_test(obs_radius, test_env_settings: Tuple = config.test_env_settings, num_test_cases: int = config.num_test_cases):
     '''
     create test set
     '''
 
     for map_length, num_agents, density in test_env_settings:
 
-        name = f'./test_set/{map_length}length_{num_agents}agents_{density}density.pth'
+        name = f'./test_set/r{obs_radius}/{map_length}length_{num_agents}agents_{density}density.pth'
         print(f'-----{map_length}length {num_agents}agents {density}density-----')
 
         tests = []
 
-        env = Environment(fix_density=density, num_agents=num_agents, map_length=map_length)
+        env = Environment(obs_radius=obs_radius, fix_density=density, num_agents=num_agents, map_length=map_length)
 
         for _ in tqdm(range(num_test_cases)):
             tests.append((np.copy(env.map), np.copy(env.agents_pos), np.copy(env.goals_pos)))
@@ -58,7 +58,10 @@ def create_test(test_env_settings: Tuple = config.test_env_settings, num_test_ca
         with open(name, 'wb') as f:
             pickle.dump(tests, f)
 
-def core_test_model(network, model_name, datetime, test_set, pool=None):
+def core_test_model(obs_radius, network, model_name, datetime, test_set, pool=None):
+    """
+    run test for 1 model
+    """
     print(f'model name: {model_name}')
     state_dict = torch.load(os.path.join(config.test_model_path, f'{datetime}/{model_name}.pth'),
                         map_location=DEVICE)
@@ -82,7 +85,12 @@ def core_test_model(network, model_name, datetime, test_set, pool=None):
     output_file.parent.mkdir(exist_ok=True, parents=True)
     with open(filepath, "a") as f:
         writer = csv.writer(f)
-        writer.writerow(['training_steps', 'map_size', 'num_agents', 'density', 'success_rate', 'avg_steps', 'commu_times'])
+        writer.writerow(['training_steps', 'map_size', 'num_agents', 'density', 'success_rate', 'avg_steps', 'commu_times',
+                         # created by myself
+                         'possible_commu', 'avg_steps_processed_per_second', 'avg_network_step_time',
+                         # sub-process inside network.step()
+                         'avg_before_select_comm_time','avg_select_comm_time', 'avg_after_select_comm_time'
+                         ])
 
     start_time = time.time()
 
@@ -93,41 +101,75 @@ def core_test_model(network, model_name, datetime, test_set, pool=None):
             continue
 
         print(f"test set: {case[0]} length {case[1]} agents {case[2]} density")
-        with open(f'./test_set/{case[0]}length_{case[1]}agents_{case[2]}density.pth', 'rb') as f:
+        with open(f'./test_set/r{obs_radius}/{case[0]}length_{case[1]}agents_{case[2]}density.pth', 'rb') as f:
             tests = pickle.load(f)
 
-        tests = [(test, network) for test in tests]
+        tests = [(test, network, obs_radius) for test in tests]
 
         if pool is not None:
             # using mp
             ret = pool.map(test_one_case, tests)
-            success, steps, num_comm = zip(*ret)
+            success, steps, num_comm, num_possible_comm = zip(*ret)
         else:
             # without mp
             success = np.zeros(len(tests))
             steps = np.zeros(len(tests))
             num_comm = np.zeros(len(tests))
+            num_possible_comm = np.zeros(len(tests))
+            steps_processed_per_second = np.zeros(len(tests))
+
+            network_step_time = np.zeros(len(tests))
+            before_select_comm_time = np.zeros(len(tests))
+            select_comm_time = np.zeros(len(tests))
+            after_select_comm_time = np.zeros(len(tests))
 
             for id, test in enumerate(tests):
-                su, st, comm = test_one_case(test)
+                # refer to above names
+                su, st, comm, possible_comm, spps, nst, bsct, sct, asct = test_one_case(test)
 
                 success[id] = su
                 steps[id] = st
                 num_comm[id] = comm
+                num_possible_comm[id] = possible_comm
+                steps_processed_per_second[id] = spps
+                network_step_time[id] = nst
+                before_select_comm_time[id] = bsct
+                select_comm_time[id] = sct
+                after_select_comm_time[id] = asct
 
         success_rate = sum(success) / len(success) * 100
         avg_steps = sum(steps) / len(steps)
         commu_times = sum(num_comm) / len(num_comm)
+        possible_commu = sum(num_possible_comm) / len(num_possible_comm)
+        avg_steps_processed_per_second = sum(steps_processed_per_second) / len(steps_processed_per_second)
+
+        avg_network_step_time = sum(network_step_time) / len(network_step_time)
+        avg_before_select_comm_time = sum(before_select_comm_time) / len(before_select_comm_time)
+        avg_select_comm_time = sum(select_comm_time) / len(select_comm_time)
+        avg_after_select_comm_time = sum(after_select_comm_time) / len(after_select_comm_time)
+
+        # # useless
+        # ecr = commu_times/possible_commu
 
         with open(filepath, "a") as f:
             writer = csv.writer(f)
-            writer.writerow([model_name, case[0], case[1], case[2], success_rate, avg_steps, commu_times])
+            writer.writerow([model_name, case[0], case[1], case[2], success_rate, avg_steps, commu_times, possible_commu,
+                             avg_steps_processed_per_second, avg_network_step_time, avg_before_select_comm_time,
+                             avg_select_comm_time, avg_after_select_comm_time])
             # writer.writerow([f"test set: {case[0]} length {case[1]} agents {case[2]} density: ",
             #     f'{success_rate}', f'{avg_steps}', f'{commu_times}'])
 
         print("success rate: {:.2f}%".format(success_rate))
         print(f"average step: {avg_steps}")
-        print(f"communication times: {commu_times}")
+        print(f"actual communication times: {commu_times}")
+        print(f"possible communication: {possible_commu}")
+        print(f'avg_steps_processed_per_second: {avg_steps_processed_per_second}')
+
+        print(f'avg_network_step_time: {avg_network_step_time}')
+        print(f'avg_before_select_comm_time: {avg_before_select_comm_time}')
+        print(f'avg_select_comm_time: {avg_select_comm_time}')
+        print(f'avg_after_select_comm_time: {avg_after_select_comm_time}')
+        # print(f'ECR: {ecr}')
 
         if avg_steps == 256 or success_rate == 0:
             print(f'max steps reached, skipping other test cases with the same map size')
@@ -138,28 +180,29 @@ def core_test_model(network, model_name, datetime, test_set, pool=None):
 
         print()
 
+    print('')
     print(f'time used for testing model {model_name}: \
             {(time.time() - start_time)/60} mins')
     print('')
 
 @ray.remote(num_gpus=2)
-def ray_test_model(model_range: Union[int, tuple], interval, datetime: str, test_set: Tuple = config.test_env_settings):
+def ray_test_model(obs_radius: int, model_range: Union[int, tuple], interval, datetime: str, test_set: Tuple = config.test_env_settings):
     '''
     test model in 'saved_models' folder
     '''
-    network = Network()
+    network = Network(obs_radius=obs_radius)
     network.eval()
     network.to(DEVICE)
 
-    print('not using torch.mp')
+    print('using ray and not using torch.mp for testing')
 
     print(f'testing model ranging from {model_range[0]} to {model_range[1]}')
 
     for model_name in range(model_range[1], model_range[0] - 1, -interval):
-        core_test_model(network=network, model_name=model_name, datetime=datetime, test_set=test_set)
+        core_test_model(obs_radius, network=network, model_name=model_name, datetime=datetime, test_set=test_set)
         print('\n')
 
-
+# when not using ray
 def test_model(model_range: Union[int, tuple], interval, datetime: str, test_set: Tuple = config.test_env_settings):
     '''
     test model in 'saved_models' folder
@@ -179,10 +222,10 @@ def test_model(model_range: Union[int, tuple], interval, datetime: str, test_set
         print('\n')
 
 def test_one_case(args):
-    env_set, network = args
+    env_set, network, obs_radius = args
 
-    env = Environment()
-    env.load(env_set[0], env_set[1], env_set[2])
+    env = Environment(obs_radius=obs_radius)
+    env.load(env_set[0], env_set[1], env_set[2]) # map, agent pos, goal pos
     obs, last_act, pos = env.observe()
 
     done = False
@@ -190,22 +233,62 @@ def test_one_case(args):
 
     step = 0
     num_comm = 0
+    num_possible_comm = 0
+
+    # time
+    network_step_time = 0 # only accumulate time used in network.step
+    episode_start_time = time.time()
+
     while not done and env.steps < config.max_episode_length:
         obs_tensor = torch.as_tensor(obs.astype(np.float32)).to(DEVICE)
         last_act_tensor = torch.as_tensor(last_act.astype(np.float32)).to(DEVICE)
         pos_tensor = torch.as_tensor(pos.astype(np.int)).to(DEVICE)
 
-        actions, _, _, _, comm_mask = network.step(obs_tensor, last_act_tensor, pos_tensor)
+        start_step_time = time.time()
+        actions, _, _, _, comm_mask, in_obs_mask = network.step(obs_tensor, last_act_tensor, pos_tensor)
+        # print(f'network.step() time: {time.time() - network_step_time}')
+        # 0.02s
+        network_step_time += time.time() - start_step_time
+
+        env_step_time = time.time()
         (obs, last_act, pos), _, done, _ = env.step(actions)
+        # print(f'env step time: {time.time() - env_step_time}')
+        # 0.0003s
+
         step += 1
         num_comm += np.sum(comm_mask)
+        num_possible_comm += np.sum(in_obs_mask)
 
-    return np.array_equal(env.agents_pos, env.goals_pos), step, num_comm
+    # calculate steps processed per second
+    total_time_in_episode = time.time() - episode_start_time
+    steps_processed_per_second = step / total_time_in_episode
+
+    # avg_network_step_time = network_step_time / step
+    episodic_avg_before_select_comm_time = network.before_select_comm_time / step
+    episodic_avg_select_comm_time = network.select_comm_time / step
+    episodic_avg_after_select_comm_time = network.after_select_comm_time / step
+    # print(f'Total time in this episode: {total_time_in_episode}, number of commu: {num_comm}')
+    # print(f'Avg network step time: {avg_network_step_time}')
+    # print(f'(in network step) Avg Before select comm: {avg_before_select_comm_time}')
+    # print(f'(in network step) Avg At select comm: {avg_select_comm_time}')
+    # print(f'(in network step) Avg After select comm: {avg_after_select_comm_time}')
+    #
+    # # result = np.array_equal(env.agents_pos, env.goals_pos)
+    # # success_rate = sum(result) / len(result) * 100
+    # # print(f'success rate: {success_rate}')
+    # print(f'steps in this episode: {step}')
+    # print(f'num_comm: {num_comm}')
+    # print(f'')
+    #
+    # exit()
+
+    return np.array_equal(env.agents_pos, env.goals_pos), step, num_comm, num_possible_comm, steps_processed_per_second, \
+           network_step_time, episodic_avg_before_select_comm_time, episodic_avg_select_comm_time, episodic_avg_after_select_comm_time
 
 @ray.remote(num_gpus=2)
-def code_test():
-    env = Environment()
-    network = Network()
+def code_test(obs_radius):
+    env = Environment(obs_radius)
+    network = Network(obs_radius)
     network.eval()
     network.to(DEVICE)
     obs, last_act, pos = env.observe()
@@ -275,21 +358,52 @@ class Foo(object):
 if __name__ == '__main__':
     start_time = time.time()
 
-    start_range = int(sys.argv[1])
-    end_range = int(sys.argv[2])
-    interval = int(sys.argv[3])
-    datetime = sys.argv[4]
+    obs_radius = int(sys.argv[1])
 
-    print(f'testing spec')
+    if obs_radius == 1:
+        model_train_time='22-08-11_at_22.45.38'
+        start_range=105000
+        end_range=105000
+        interval=15000
+    elif obs_radius == 2:
+        model_train_time='22-08-08_at_23.37.56'
+        start_range=120000 # 30-40mins per test, rmb to adjust time limit
+        end_range=120000
+        interval=15000
+    elif obs_radius == 3:
+        model_train_time = '22-08-03_at_20.55.01-r3' # forget about this -r3 tag, it was a mistake
+        start_range = 90000  # 30-40mins per test, rmb to adjust time limit
+        end_range = 90000
+        interval = 15000
+    elif obs_radius == 4:
+        model_train_time='22-07-26_at_18.43.26'
+        start_range=120000 # 30-40mins per test, rmb to adjust time limit
+        end_range=120000
+        interval=15000
+    elif obs_radius == 5:
+        model_train_time='22-08-02_at_01.13.25'
+        start_range=90000 # 30-40mins per test, rmb to adjust time limit
+        end_range=90000
+        interval=15000
+    else:
+        raise ValueError('obs radius not recognised')
+
+    # start_range = int(sys.argv[1])
+    # end_range = int(sys.argv[2])
+    # interval = int(sys.argv[3])
+    # datetime = sys.argv[4]
+
+    print(f'spec of the models for the current test')
+    print(f'obs radius: {obs_radius}')
     print(f'start range: {start_range}, end range: {end_range}')
-    print(f'datetime: {datetime}')
+    print(f'model trained at: {model_train_time}')
 
     # # test with ray
     print(f'testing model with ray')
     ray.init()
     # ray.get(foo.remote('testing ray remote func'))
     # ray.get(code_test.remote())
-    ray.get(ray_test_model.remote(model_range=(start_range, end_range), interval=interval, datetime=datetime))
+    ray.get(ray_test_model.remote(obs_radius=obs_radius, model_range=(start_range, end_range), interval=interval, datetime=model_train_time))
 
     # test without ray
     # print(f'testing model without ray')
@@ -319,12 +433,10 @@ if __name__ == '__main__':
 
     print(f'time used for testing range ({start_range}-{end_range}): {(time.time() - start_time)/60}')
 
-    print()
-    pass
-
 # if __name__ == "__main__":
-#     # # 1. create test case
-#     # create_test()
+#     # 1. create test case
+#     obs_radius = int(sys.argv[1])
+#     create_test(obs_radius)
 
 #     # # 2. test if other params are saved
 #     # checkpoint = torch.load(os.path.join(config.test_model_path, f'22-08-04_at_18.13.20/100.pt'),
