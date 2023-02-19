@@ -305,7 +305,7 @@ class GlobalBuffer:
 
 #         # print('model saved at step {}'.format(steps))
 
-@ray.remote(num_gpus=4, num_cpus=1)
+@ray.remote(num_gpus=1, num_cpus=1)
 class Learner:
     def __init__(self, buffer: GlobalBuffer): #, model_saver: ModelSaver):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

@@ -305,6 +305,10 @@ class Network(nn.Module):
         '''
         # obs shape: seq_len, batch_size, num_agents, obs_shape
         # relative_pos shape: batch_size, seq_len, num_agents, num_agents, 2
+
+        # print(f'obs, last_act, steps, hidden, relative_pos, comm_mask shape: {obs.shape, last_act.shape, steps.shape, hidden.shape, relative_pos.shape, comm_mask.shape}')
+        # exit()
+
         seq_len, batch_size, num_agents, *_ = obs.size()
 
         obs = obs.view(seq_len*batch_size*num_agents, *self.obs_shape)
@@ -328,8 +332,11 @@ class Network(nn.Module):
         hidden_buffer = torch.stack(hidden_buffer).transpose(0, 1)
 
         # hidden size: batch_size x self.hidden_dim
-        hidden = hidden_buffer[torch.arange(config.batch_size), steps-1]
-
+        dummyx = torch.arange(config.batch_size)
+        dummyy = (steps-1).to(torch.long)
+        print(f'x type: {torch.arange(config.batch_size).type()}')
+        print(f'y type: {(dummyy).type()}')
+        hidden = hidden_buffer[dummyx, dummyy]
         adv_val = self.adv(hidden)
         state_val = self.state(hidden)
 

@@ -19,7 +19,7 @@ action_dim = 5
 ############################################################
 
 # default infrastructure setting
-num_actors = 16
+num_actors = 2
 log_interval = 10
 # training_steps = 150000 # original
 if obs_radius == 2:
@@ -33,7 +33,7 @@ print(f'save_interval: {save_interval}, training_steps: {training_steps}')
 # basic training setting
 gamma = 0.99
 batch_size = 128
-learning_starts = 50000
+learning_starts = 100
 target_network_update_freq = 1750
 max_episode_length = 256
 buffer_capacity = 262144
@@ -43,7 +43,7 @@ burn_in_steps = 20
 time = datetime.now().strftime("%y-%m-%d_at_%H.%M.%S")
 save_path=f'saved_models/{time}'
 # test_model_path=f'./saved_models'
-test_model_path=f'./saved_models'
+test_model_path=f'saved_models'
 
 actor_update_steps = 200
 

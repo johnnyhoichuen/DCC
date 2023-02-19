@@ -78,4 +78,5 @@ if __name__ == '__main__':
 
     print(f'datetime: {config.datetime}')
 
-    main(num_actors=config.num_actors-5)
+    # main(num_actors=config.num_actors-5)
+    main(num_actors=config.num_actors)
